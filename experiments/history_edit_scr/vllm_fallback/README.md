@@ -109,6 +109,31 @@ python "$E/storage.py" publish-eval "$RUN_ID" --subdir vllm-c2
 
 结果中的 `valid_pairs` 应等于 `expected_pairs`；`clean_on_hits` 记录有多少 clean 编辑请求在 on 组真正搬迁。即使 `clean_on_hits=0`，脚本也只判定输入/服务证据是否有效，不把零命中误写为行为效应。`probe-joined.jsonl` 保留每个 off/on 分支的 token 数、搬迁量、输出和错误；`probe-summary.json` 汇总组别和配对效应。两例只用于检查管线；正式估计需要扩大到 30–50 个基础样本及重复 seed。上面的 `publish-eval --subdir vllm-c2` 上传到独立的 `eval/<RUN_ID>/vllm-c2/` 前缀，逐文件核对大小、写清单，最后写 `_SUCCESS`；已归档的 `eval/<RUN_ID>/` 不会被改写。
 
+## C 组八卡分片
+
+两例试跑确认 `valid_pairs == expected_pairs`、输入 ID 校验通过，并记录 clean 实际命中后，再扩大样本。下面生成 36 个反证样本和 8 个旧判断仍有效的对照，共 44 个基础样本，按基础样本轮流分到 8 个 shard；同一样本的 A/B 历史、clean/visible/cold 终态和三个 seed 全留在同一个 shard。每张卡只启动一个服务，先 off 再 on，各 shard 使用独立端口和唯一缓存隔离键。所有 GPU 只读同一份本机 scratch 模型文件，不复制 8 份权重到磁盘。
+
+```bash
+git pull --ff-only
+conda activate clm
+E=experiments/history_edit_scr
+RUN_ID=vllm-20261125-153822
+source "$E/vllm_fallback/modelscope.env"
+RUN=$(python "$E/storage.py" run-dir "$RUN_ID")
+CLM_MODEL_DIR=$(python "$E/storage.py" model-dir "$RUN_ID")
+export CLM_MODEL_DIR
+python "$E/probe.py" prepare "$RUN/eval/vllm-c44-manifest.json" \
+  --snapshot "$CLM_MODEL_DIR" --cases 36 --stable-controls 8 --stage full
+if python "$E/vllm_fallback/sharded.py" "$RUN/eval/vllm-c44" \
+  --manifest "$RUN/eval/vllm-c44-manifest.json" \
+  --gpus 0,1,2,3,4,5,6,7 --workers 8 --seeds 42 43 44; then
+  python "$E/storage.py" publish-eval "$RUN_ID" --subdir vllm-c44
+  cat "$RUN/eval/vllm-c44/probe-summary.json"
+fi
+```
+
+`sharded.py` 创建全局输入清单、各 shard 的输入清单、`driver.log`、off/on 服务日志和配对报告。所有 shard 完成后，汇总脚本核对基础样本不重复、不缺失，off/on 参数与 token 输入配对，重新以**基础样本**为单位汇总效应及置信区间。若某个 shard 失败，保留其日志，不生成通过标记或上传；修复后用新的结果目录运行。`--workers 4` 可让同样的 8 个 shard 分两批执行，降低同时加载权重时的主机内存和 IO 压力。8 卡并发适合加速行为/正确性实验；并发服务共享主机资源，不能将各 shard 的耗时直接当作独占 GPU 的延迟基准。
+
 运行失败时，先看对应 `server.log` 的首个异常。若是显存不足，可调低 `VLLM_GPU_MEMORY_UTILIZATION` 或 `KVREUSE_SIDE_SESSIONS`、`KVREUSE_SIDE_TOKENS`，并从新 `RUN_ID` 重跑两组；不要只调其中一组。`VLLM_MAX_MODEL_LEN` 默认 32768，仅用于这轮 smoke。安装状态和服务日志成功之前，结果仍标记为「GPU 待验证」。
 
 [vLLM wheel](https://pypi.org/project/vllm/0.19.1/#files) · [官方 vLLM SCR 说明](https://github.com/facebookresearch/context-language-models/tree/3c89408be27d34e9e8d14eade365a8d440b041e9/suffix_cache_reuse/vllm)

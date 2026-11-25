@@ -5,6 +5,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 experiment=$(cd "$here/.." && pwd)
 repo=$(cd "$here/../../.." && pwd)
 source "$experiment/pins.env"
+MODEL_REVISION=${CLM_MODEL_REVISION:-$MODEL_REVISION}
 py=${PYTHON:-python}
 action=${1:-}
 mode=${2:-}
@@ -58,7 +59,9 @@ if not torch.cuda.is_available():
 print("[history-edit-vllm-config] " + json.dumps({
     "commit": subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip(),
     "backend": "vllm", "mode": mode, "vllm": vllm, "model": model,
-    "model_revision": revision, "snapshot": snapshot, "torch": torch.__version__,
+    "model_revision": revision, "model_source": os.environ.get("CLM_MODEL_SOURCE", "huggingface"),
+    "source_revision": os.environ.get("CLM_SOURCE_REVISION", revision),
+    "snapshot": snapshot, "torch": torch.__version__,
     "cuda": torch.version.cuda, "gpu": torch.cuda.get_device_name(0),
     "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
     "kvreuse_env": {key: value for key, value in os.environ.items() if key.startswith("KVREUSE_")},

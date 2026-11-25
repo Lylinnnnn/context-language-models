@@ -14,7 +14,9 @@ from pathlib import Path, PurePosixPath
 from probe import HERE, PINS
 
 DEFAULTS = dict(line.split("=", 1) for line in (HERE / "storage.env").read_text().splitlines())
-REVISION = PINS["MODEL_REVISION"]
+REVISION = os.environ.get("CLM_MODEL_REVISION") or PINS["MODEL_REVISION"]
+if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", REVISION):
+    raise ValueError(f"invalid model artifact revision: {REVISION!r}")
 MODEL_PREFIX = f"models/{PINS['MODEL_ID']}/{REVISION}"
 EXCLUDED = {".cache", ".venv", ".git", "__pycache__", ".ossutil_checkpoint"}
 SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -140,6 +142,10 @@ def publish(run, kind):
     marker = workspace / SUCCESS
     manifest.write_text(json.dumps({
         "kind": kind, "model_revision": REVISION if kind == "model" else None, "files": files,
+        "source": ({"provider": os.environ.get("CLM_MODEL_SOURCE", "huggingface"),
+                    "repo": PINS["MODEL_ID"],
+                    "revision": os.environ.get("CLM_SOURCE_REVISION", REVISION)}
+                   if kind == "model" else None),
     }, indent=2, sort_keys=True) + "\n")
 
     for name, entry in files.items():

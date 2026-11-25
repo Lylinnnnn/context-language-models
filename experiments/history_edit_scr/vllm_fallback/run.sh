@@ -82,6 +82,7 @@ print("[history-edit-vllm-config] " + json.dumps({
     "cuda": torch.version.cuda, "gpu": torch.cuda.get_device_name(0),
     "python_prefix": sys.prefix,
     "flashinfer_workspace_base": os.environ["FLASHINFER_WORKSPACE_BASE"],
+    "n_body_params": 24.3532e9,
     "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
     "kvreuse_env": {key: value for key, value in os.environ.items() if key.startswith("KVREUSE_")},
 }, sort_keys=True, default=str), flush=True)
@@ -99,7 +100,7 @@ PY
     ;;
   report)
     "$py" "$repo/suffix_cache_reuse/vllm/analysis/scr_report.py" "$out/server.log" \
-      --csv "$out/requests.csv" --json "$out/summary.json" | tee "$out/report.log"
+      --n-body-params 24.3532e9 --csv "$out/requests.csv" --json "$out/summary.json" | tee "$out/report.log"
     "$py" - "$out/summary.json" "$mode" <<'PY'
 import json
 import sys

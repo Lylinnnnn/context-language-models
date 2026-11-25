@@ -88,6 +88,7 @@ def aggregate(root, manifest, count, seeds):
     pairs = {key: (arms["off"], arms["on"]) for key, arms in paired.items()}
     result = {
         "passed": True, "manifest_sha256": digest(manifest), "seeds": seeds,
+        "n_body_params": 24.3532e9,
         "shards": shard_summaries, "expected_pairs": expected_pairs,
         "valid_pairs": len(pairs),
         "clean_on_hits": sum(on["splice_ok"] for (_, _, condition, _), (_, on) in pairs.items()

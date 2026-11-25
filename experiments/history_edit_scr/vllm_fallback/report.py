@@ -126,11 +126,12 @@ def main():
     parser.add_argument("run_directory", type=Path)
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--seeds", type=int, nargs="+", default=[42])
+    parser.add_argument("--recompute", action="store_true", help="regenerate derived files after correcting the official server report")
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text())
     data = {arm: load_arm(args.run_directory, arm) for arm in ARMS}
     off_config, on_config = data["off"][0], data["on"][0]
-    for key in ("commit", "backend", "model", "model_revision", "model_source", "source_revision", "snapshot", "vllm", "gpu", "torch", "cuda", "python_prefix", "flashinfer_workspace_base"):
+    for key in ("commit", "backend", "model", "model_revision", "model_source", "source_revision", "snapshot", "vllm", "gpu", "torch", "cuda", "python_prefix", "flashinfer_workspace_base", "n_body_params"):
         if off_config.get(key) != on_config.get(key):
             raise ValueError(f"server arms differ in {key}")
     if off_config["mode"] != "off" or on_config["mode"] != "on":
@@ -177,10 +178,11 @@ def main():
     for arm in ARMS:
         if used[arm] != set(data[arm][3]):
             raise ValueError(f"{arm}: unexpected or unpaired transcript requests")
-    with (args.run_directory / "probe-joined.jsonl").open("x") as stream:
+    with (args.run_directory / "probe-joined.jsonl").open("w" if args.recompute else "x") as stream:
         for row in joined:
             write_row(stream, row)
     summary = {
+        "n_body_params": 24.3532e9,
         "manifest_sha256": digest(manifest), "expected_pairs": sum(len(c["branches"]) for c in manifest["cases"]) * len(args.seeds),
         "valid_pairs": len(pairs), "invalid_pairs": invalid,
         "groups": paired_metrics(pairs), "effects": effects(pairs),

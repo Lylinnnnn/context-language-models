@@ -2,6 +2,8 @@
 
 此目录是独立的 vLLM 服务后端验收，固定 `vllm==0.19.1`。已接入官方四轮 smoke 和 C 组固定 token 探针；vLLM 与原 SGLang 路线的数值不可直接合并。模型来自 ModelScope，第一次上传到 OSS 后以文件 SHA-256 清单冻结权重与 tokenizer；`pins.env` 的 Hugging Face revision 只属于原 SGLang 路线。
 
+本目录的 C 组样本是**按 ContextBench KV Store 形式合成的受控探针**，不是原版 ContextBench 或 BrowseComp-Plus 题目。`vllm-c44` 的 44 个基础样本及贪心、单并发设置可用于估计固定输入下的缓存路径效应，但不能当作论文的 830 题 BCP 准确率或端到端速度复现。官方 vLLM SCR BCP 对照使用 830 道原题、3 个 seed、每个服务 8 并发、28,672 token 上下文预算以及独立的检索/判分资源；那些资源和配置需单独验收。原论文 SGLang SCR 对照也不能由 vLLM 的数值替代。
+
 ## 一次准备
 
 在 GPU 节点的 fork 仓库根目录执行。若分支已经 checkout，先 `git pull --ff-only`。持久 Conda 环境按名称 `clm` 建在用户的 `~/.conda/envs/`；下载缓存、权重和评估输出放在本机 scratch。确保 OSS 配置可用，模型下载及归档细节见 [服务器与 OSS](../SERVER_OSS.md)。
@@ -85,6 +87,17 @@ python "$E/storage.py" publish-eval "$RUN_ID"
 下载前检查 `df -h "$RUN"` 及实际配额；安装缓存和权重均留在该 run 的本机目录。上传流程逐文件核对大小，完成标记最后写入；后续运行可由 OSS 暂存同一快照。遇到 OSS 权限或 Endpoint 错误时先处理配置，不将其当作模型不存在。完整路径规则见 [服务器与 OSS](../SERVER_OSS.md#权重和运行目录)。
 
 `pilot.py` 用一张卡依次启动 off 和 on 服务，端口默认 32000 与 32001。它对每组运行仓库内的官方 `suffix_cache_reuse/vllm/tests/smoke.py`，停止服务后调用官方 `analysis/scr_report.py`。验收条件包括 on 组至少一条编辑请求 `relocated > 0`，off 组搬迁量为 0，以及官方 token 守恒检查通过。两个服务除 SCR 开关、端口和输出路径外使用同一组参数。每组的 `server.log`、`smoke.log`、`requests.csv`、`summary.json` 和 `report.log` 留在各自输出目录。
+
+Qwen3.6-27B 的 prefix-reuse PFLOPs 使用 `N_body=24.3532e9`。vLLM 官方解析脚本默认 `6.95e9`，针对 Qwen3-8B；2026-11-25 以前由本目录生成的报告误用了这个默认值，**绝对 PFLOPs 偏低，token 计数和同一模型的 off/on 比例不变**。从修复提交起，`run.sh report` 显式传入 27B 系数。已有成功运行的原始 `server.log` 可以离线重算，不必再次启动 GPU 服务：
+
+```bash
+OUT="$RUN/eval/vllm-c2-jitfix"
+bash "$E/vllm_fallback/run.sh" report off "$OUT"
+bash "$E/vllm_fallback/run.sh" report on "$OUT"
+python "$E/vllm_fallback/report.py" "$OUT" "$RUN/eval/vllm-c2-manifest.json" --recompute
+```
+
+上述命令只重写 CSV/JSON/文本报告，不改原始请求、服务日志或 OSS 上已归档的结果；若要在 OSS 留下修正后报告，用新的评估归档前缀。
 
 ## C 组两例配对探针
 

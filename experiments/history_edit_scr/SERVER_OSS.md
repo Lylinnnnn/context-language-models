@@ -10,11 +10,12 @@ grep '^PRETTY_NAME=' /etc/os-release
 nvidia-smi --query-gpu=index,name,driver_version,memory.total,memory.free --format=csv
 python3 --version
 python3.12 --version
+python3.12 -m ensurepip --version
 command -v conda mamba srun sbatch docker apptainer ossutil
 df -h /tmp
 findmnt -T /tmp -o TARGET,FSTYPE,AVAIL
 findmnt -T /data/oss_bucket_0/yanlin -o TARGET,FSTYPE
-ossutil --version
+ossutil version
 ```
 
 机器有 Python 3.12 且能创建 venv 时可以用 venv。若机器已经使用 Conda 管理 Python，可以用 `conda create -n clm-scr python=3.12 pip` 和 `conda activate clm-scr`。激活选定环境后执行 [依赖安装](README.md#服务器环境) 中的 pip 命令。若从 Slurm 获得设备，保留作业分配的 `CUDA_VISIBLE_DEVICES`。
@@ -28,6 +29,8 @@ ossutil --version
 ```bash
 ossutil ls oss://industry-algo/yanlin/clm/
 ```
+
+列表命令成功后，可用 `ossutil stat` 查询固定模型前缀里的 `_SUCCESS`。对象存在时走下文的 OSS 暂存流程。返回 `NoSuchKey` 时，先准备并归档该 revision。遇到权限或 Endpoint 错误时，先核对服务器的现有配置和管理员授权。
 
 管理员可将 bucket 的 ListObjects 权限限定到 `yanlin/clm/` 下的请求前缀，并将 GetObject、PutObject 授予 `acs:oss:*:*:industry-algo/yanlin/clm/*`。分片上传还需核对 ListParts 和 AbortMultipartUpload。本流程只需要读、写和查询，对象删除权限按实际清理需求单独授予。
 

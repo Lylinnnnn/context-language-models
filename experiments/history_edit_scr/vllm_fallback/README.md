@@ -4,7 +4,7 @@
 
 ## 一次准备
 
-在 GPU 节点的 fork 仓库根目录执行。若分支已经 checkout，先 `git pull --ff-only`。下面的 Conda 环境、下载缓存和权重都放在本机 scratch。确保 OSS 配置可用，模型下载及归档细节见 [服务器与 OSS](../SERVER_OSS.md)。
+在 GPU 节点的 fork 仓库根目录执行。若分支已经 checkout，先 `git pull --ff-only`。持久 Conda 环境按名称 `clm` 建在用户的 `~/.conda/envs/`；下载缓存、权重和评估输出放在本机 scratch。确保 OSS 配置可用，模型下载及归档细节见 [服务器与 OSS](../SERVER_OSS.md)。
 
 ```bash
 git fetch origin
@@ -19,8 +19,10 @@ export TMPDIR="$RUN/tmp" HF_HOME="$RUN/hf" PIP_CACHE_DIR="$RUN/pip-cache"
 export CONDA_PKGS_DIRS="$RUN/conda-pkgs"
 export MODELSCOPE_CACHE="$RUN/modelscope-cache" MODELSCOPE_HOME="$RUN/modelscope-home"
 df -h "$RUN"
-conda create --prefix "$RUN/conda" python=3.12 pip -y
-conda activate "$RUN/conda"
+df -h /home/liuyanlin.lyl
+conda create -n clm python=3.12 pip -y
+conda activate clm
+python -c 'import sys; print(sys.prefix)'
 python -m pip install -e ./suffix_cache_reuse/vllm
 python -m pip check
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python -c 'import torch, vllm; assert torch.cuda.is_available(); print(vllm.__version__, torch.__version__, torch.version.cuda, torch.cuda.get_device_name(0))'
@@ -28,6 +30,22 @@ python suffix_cache_reuse/vllm/tests/unit_test.py
 ```
 
 如果安装未成功，停止在这一行并保留 pip 错误；`pip check` 和 CPU 单测不能替代安装与 CUDA 验收。默认 pip 源缺少 0.19.1 时，先确认该节点能访问官方 PyPI，再给安装命令加 `--index-url https://pypi.org/simple`。不要在这个环境里安装 `suffix_cache_reuse/sglang`，它固定另一套服务依赖。
+
+若已按照旧说明将环境建在 `$RUN/conda`，先让正在运行的 smoke 完成，再迁移到持久的命名环境。Conda 支持从已有环境克隆。克隆后重装两个轻量的入口包，检查实际 Python 路径、依赖和 GPU；这些通过后才清理旧环境。模型和评估文件位于 `$RUN/model` 与 `$RUN/eval`，不随旧环境删除。
+
+```bash
+conda deactivate
+df -h /home/liuyanlin.lyl
+conda create -n clm --clone "$RUN/conda" -y
+conda activate clm
+python -m pip install --no-deps --force-reinstall -e ./suffix_cache_reuse/vllm 'modelscope-hub==0.7.2'
+python -m pip check
+python -c 'import sys, torch, vllm; assert torch.cuda.is_available(); assert vllm.__version__ == "0.19.1"; print(sys.prefix, vllm.__version__, torch.__version__)'
+python suffix_cache_reuse/vllm/tests/unit_test.py
+conda info --envs
+```
+
+确认 `sys.prefix` 指向 `/home/liuyanlin.lyl/.conda/envs/clm`、GPU 可见，并用新环境完成后续服务检查后，可用 `conda env remove -p "$RUN/conda"` 清理旧环境。这个命令只移除旧 Conda 环境，不移除整个 `$RUN`。
 
 ## 从 ModelScope 归档模型并运行
 

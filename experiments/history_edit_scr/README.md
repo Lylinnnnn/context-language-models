@@ -14,16 +14,37 @@ cd context-language-models
 getconf GNU_LIBC_VERSION
 ```
 
-Linux x86_64 上，SGLang 0.5.16 的 Python 3.12 wheel 需要 glibc 2.34 或更新版本。若系统低于 2.34，先切换到满足要求的 GPU Notebook 或容器镜像。普通 venv 和 Conda 环境都使用当前系统或容器的 glibc。pip 候选版本停在 0.5.10.post1 与新版 wheel 被 glibc 过滤的现象吻合，也可能是配置的镜像源尚未同步。 [SGLang 0.5.16 发布文件](https://pypi.org/project/sglang/0.5.16/#files)
+Linux x86_64 上，SGLang 0.5.16 的 Python 3.12 wheel 需要 glibc 2.34 或更新版本。已确认旧 Notebook 节点为 glibc 2.32 时，先切换到满足要求的 GPU Notebook 或容器镜像；在旧节点里仅新建 Conda 环境无法改变系统 glibc。原安装失败后，可在仓库根目录退出并删除旧 venv，避免后续混用：
 
-确认 glibc 满足要求后，创建并激活一个 Python 3.12 环境。
+```bash
+cd "$(git rev-parse --show-toplevel)"
+if [ "${VIRTUAL_ENV:-}" = "$PWD/.venv" ]; then deactivate; fi
+if [ -f .venv/pyvenv.cfg ]; then rm -rf -- .venv; fi
+```
+
+这个命令只删除仓库里的 `.venv`，不会删除 Conda base、代码、权重或 OSS 文件。pip 候选版本停在 0.5.10.post1 与新版 wheel 被 glibc 过滤的现象吻合。 [SGLang 0.5.16 发布文件](https://pypi.org/project/sglang/0.5.16/#files)
+
+如果平台没有现成的新 GPU 镜像，先检查 `command -v docker podman apptainer singularity`。有容器运行能力时，可基于 [SGLang 0.5.16 官方 Dockerfile](https://github.com/sgl-project/sglang/blob/v0.5.16/docker/Dockerfile) 使用的 Ubuntu 24.04/CUDA 13.0.1 基础镜像制作运行环境，并验证容器内 glibc、Python 与 GPU。没有容器运行能力时，另一个实验方向是仓库的官方 vLLM SCR：它固定 vLLM 0.19.1，其 Linux x86_64 wheel 要求 glibc 2.31+，但仍须检查依赖和 GPU，并为现有 SGLang 专用脚本另做适配。[vLLM 0.19.1 发布文件](https://pypi.org/project/vllm/0.19.1/#files)
+
+不要仅将 SGLang 降到 0.5.10.post1：官方 SCR 包固定 0.5.16，补丁调用 SGLang 内部调度器、缓存池及混合模型状态接口。降级需要移植补丁并重新跑 GPU 回归，不能当作原版复现。
+
+确认新镜像的 glibc 满足要求后，若已安装 Conda，创建并激活一个 Python 3.12 环境：
+
+```bash
+getconf GNU_LIBC_VERSION
+conda create -n clm-scr python=3.12 pip -y
+conda activate clm-scr
+python --version
+```
+
+新镜像没有 Conda 时也可以创建 venv：
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 ```
 
-使用 Conda 时，先退出已激活的 venv，再运行 `conda create -n clm-scr python=3.12 pip` 和 `conda activate clm-scr`。使用统一环境安装两个项目，并在安装成功后验证依赖和 GPU。
+使用选定的同一个环境安装两个项目，并在安装成功后验证依赖和 GPU。
 
 ```bash
 python -m pip install -e . -e ./suffix_cache_reuse/sglang &&

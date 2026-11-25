@@ -19,7 +19,7 @@ findmnt -T /data/oss_bucket_0/yanlin -o TARGET,FSTYPE
 ossutil version
 ```
 
-确认当前系统或容器的 glibc 至少为 2.34 后再创建环境。机器有 Python 3.12 且能创建 venv 时可以用 venv。若机器已经使用 Conda 管理 Python，可以用 `conda create -n clm-scr python=3.12 pip` 和 `conda activate clm-scr`。激活选定环境后执行 [依赖安装](README.md#服务器环境) 中的 pip 命令。若从 Slurm 获得设备，保留作业分配的 `CUDA_VISIBLE_DEVICES`。
+确认当前系统或容器的 glibc 至少为 2.34 后再创建环境。已知旧 Notebook 为 glibc 2.32，不能在该环境中仅靠新建 Conda 环境解决 SGLang 0.5.16 的 wheel 兼容性。旧 venv 清理、新镜像中的 Conda 或 venv 命令见 [服务器环境](README.md#服务器环境)。激活选定环境后执行其中的 pip 安装和 GPU 检查。若从 Slurm 获得设备，保留作业分配的 `CUDA_VISIBLE_DEVICES`。
 
 ## 确认 OSS
 

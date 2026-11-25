@@ -34,13 +34,30 @@ from storage import model_ready
 print(model_ready(sys.argv[1]))
 PY
 )
+    set -o noclobber
+    exec >"$out/server.log" 2>&1
+    # FlashInfer's shared JIT cache may still contain include paths from a removed Conda env.
+    # Keep this run's regenerated kernels on local scratch, outside published eval artifacts.
+    export FLASHINFER_WORKSPACE_BASE="${FLASHINFER_WORKSPACE_BASE:-$(dirname "$(dirname "$model_dir")")}"
+    mkdir -p "$FLASHINFER_WORKSPACE_BASE"
+    "$py" - <<'PY'
+from importlib.util import find_spec
+from pathlib import Path
+import sys
+
+spec = find_spec("flashinfer")
+if spec is None or not spec.submodule_search_locations:
+    sys.exit("FlashInfer is unavailable in the active Python environment")
+header = Path(next(iter(spec.submodule_search_locations))) / "data/include/flashinfer/flat/prefill/prefill_kernel_delta_rule_sm90.cuh"
+if not header.is_file():
+    sys.exit(f"FlashInfer SM90 GDN header missing from active environment: {header}")
+print(f"FlashInfer SM90 GDN header: {header}", flush=True)
+PY
     export KVREUSE_ENABLED=$enabled KVREUSE_MAX_BLOCKS=6 KVREUSE_SSM_MODE=fork
     export KVREUSE_SIDE_SESSIONS=${KVREUSE_SIDE_SESSIONS:-4}
     export KVREUSE_MAX_SESSIONS=${KVREUSE_MAX_SESSIONS:-$KVREUSE_SIDE_SESSIONS}
     export KVREUSE_SIDE_TOKENS=${KVREUSE_SIDE_TOKENS:-12000}
     export KVREUSE_TRACE=1
-    set -o noclobber
-    exec >"$out/server.log" 2>&1
     "$py" - "$repo" "$MODEL_ID" "$MODEL_REVISION" "$model_dir" "$mode" <<'PY'
 import json
 import os
@@ -63,6 +80,8 @@ print("[history-edit-vllm-config] " + json.dumps({
     "source_revision": os.environ.get("CLM_SOURCE_REVISION", revision),
     "snapshot": snapshot, "torch": torch.__version__,
     "cuda": torch.version.cuda, "gpu": torch.cuda.get_device_name(0),
+    "python_prefix": sys.prefix,
+    "flashinfer_workspace_base": os.environ["FLASHINFER_WORKSPACE_BASE"],
     "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
     "kvreuse_env": {key: value for key, value in os.environ.items() if key.startswith("KVREUSE_")},
 }, sort_keys=True, default=str), flush=True)

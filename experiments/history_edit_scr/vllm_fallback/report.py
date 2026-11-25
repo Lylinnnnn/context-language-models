@@ -130,8 +130,8 @@ def main():
     manifest = json.loads(args.manifest.read_text())
     data = {arm: load_arm(args.run_directory, arm) for arm in ARMS}
     off_config, on_config = data["off"][0], data["on"][0]
-    for key in ("commit", "backend", "model", "model_revision", "model_source", "source_revision", "snapshot", "vllm", "gpu", "torch", "cuda"):
-        if off_config[key] != on_config[key]:
+    for key in ("commit", "backend", "model", "model_revision", "model_source", "source_revision", "snapshot", "vllm", "gpu", "torch", "cuda", "python_prefix", "flashinfer_workspace_base"):
+        if off_config.get(key) != on_config.get(key):
             raise ValueError(f"server arms differ in {key}")
     if off_config["mode"] != "off" or on_config["mode"] != "on":
         raise ValueError("server mode labels disagree with result directories")

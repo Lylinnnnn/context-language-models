@@ -136,4 +136,38 @@ fi
 
 运行失败时，先看对应 `server.log` 的首个异常。若是显存不足，可调低 `VLLM_GPU_MEMORY_UTILIZATION` 或 `KVREUSE_SIDE_SESSIONS`、`KVREUSE_SIDE_TOKENS`，并从新 `RUN_ID` 重跑两组；不要只调其中一组。`VLLM_MAX_MODEL_LEN` 默认 32768，仅用于这轮 smoke。安装状态和服务日志成功之前，结果仍标记为「GPU 待验证」。
 
+### Conda 环境迁移后的 FlashInfer JIT 缓存
+
+若 `server.log` 的 nvcc 命令仍带已删除的 `/tmp/clm/<run_id>/conda/.../flashinfer/data/include`，但当前 Python 位于 `~/.conda/envs/clm`，这是旧的共享 FlashInfer JIT 工作目录保留了旧环境绝对路径。`run.sh serve` 现在默认将 `FLASHINFER_WORKSPACE_BASE` 设为模型所在 run 的本机 scratch；FlashInfer 0.6.6 会在其下新建 `.cache/flashinfer/`，不再读取 `~/.cache/flashinfer/0.6.6/90a` 的旧构建文件。若该变量已由用户设置，脚本尊重用户设置。新目录不会作为 eval 或模型产物上传 OSS。
+
+先在 `(clm)` 中确认 FlashInfer 的 SM90 GDN 头文件确实位于新环境：
+
+```bash
+python - <<'PY'
+import sys
+from importlib.util import find_spec
+from pathlib import Path
+spec = find_spec('flashinfer')
+assert spec and spec.submodule_search_locations, 'flashinfer not installed'
+header = Path(next(iter(spec.submodule_search_locations))) / 'data/include/flashinfer/flat/prefill/prefill_kernel_delta_rule_sm90.cuh'
+print('Python:', sys.prefix)
+print('GDN header:', header, 'exists:', header.is_file())
+assert header.is_file(), 'current environment is missing FlashInfer package data'
+PY
+```
+
+若头文件存在，沿用已冻结的 `vllm-c2-manifest.json`，在**新的**结果目录重跑。旧失败目录和全局缓存先保留，不需要删除、重装 Conda 或重新下载模型：
+
+```bash
+export FLASHINFER_WORKSPACE_BASE="$RUN"
+export MAX_JOBS=4
+if CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python "$E/vllm_fallback/pilot.py" \
+  "$RUN/eval/vllm-c2-jitfix" --manifest "$RUN/eval/vllm-c2-manifest.json"; then
+  cp "$RUN/eval/vllm-c2-manifest.json" "$RUN/eval/vllm-c2-jitfix/manifest-input.json"
+  python "$E/storage.py" publish-eval "$RUN_ID" --subdir vllm-c2-jitfix
+fi
+```
+
+第一次新缓存编译可能较慢。若头文件在当前环境中不存在，停止重跑并检查当前 `flashinfer-python` 安装，而不是反复清理 JIT 缓存。
+
 [vLLM wheel](https://pypi.org/project/vllm/0.19.1/#files) · [官方 vLLM SCR 说明](https://github.com/facebookresearch/context-language-models/tree/3c89408be27d34e9e8d14eade365a8d440b041e9/suffix_cache_reuse/vllm)

@@ -20,26 +20,30 @@ EOF
 }
 
 snapshot() {
-  "$py" - "$MODEL_ID" "$MODEL_REVISION" <<'PY'
-import json
+  PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" "$py" - "$MODEL_ID" "$MODEL_REVISION" <<'PY'
+import os
 import sys
-from pathlib import Path
-from huggingface_hub import snapshot_download
+from storage import model_ready
 
-path = Path(snapshot_download(sys.argv[1], revision=sys.argv[2], local_files_only=True))
-index = path / "model.safetensors.index.json"
-if not index.is_file():
-    sys.exit(f"{index} missing. Run run.sh download.")
-shards = set(json.loads(index.read_text())["weight_map"].values())
-if missing := sorted(name for name in shards if not (path / name).is_file()):
-    sys.exit(f"Model shards missing: {missing}. Run run.sh download.")
-print(path)
+path = os.environ.get("CLM_MODEL_DIR")
+if not path:
+    from huggingface_hub import snapshot_download
+
+    path = snapshot_download(sys.argv[1], revision=sys.argv[2], local_files_only=True)
+print(model_ready(path))
 PY
 }
 
 action=${1:-help}
 case "$action" in
-  download) exec hf download "$MODEL_ID" --revision "$MODEL_REVISION" ;;
+  download)
+    if [[ -n ${CLM_MODEL_DIR:-} ]]; then
+      target=$(PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" "$py" -c \
+        'import sys; from storage import model_location; print(model_location(sys.argv[1]))' "$CLM_MODEL_DIR")
+      exec hf download "$MODEL_ID" --revision "$MODEL_REVISION" --local-dir "$target"
+    fi
+    exec hf download "$MODEL_ID" --revision "$MODEL_REVISION"
+    ;;
   snapshot) snapshot; exit ;;
   serve|smoke|contextbench|bcp) ;;
   help|-h|--help) usage; exit ;;

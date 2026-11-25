@@ -4,6 +4,8 @@
 
 ## 服务器环境
 
+先在实际 GPU 节点确认 Python、驱动、本机可用空间及 OSS 配置，再选 Python 环境和权重路径。检查命令与存储流程见 [服务器与 OSS](SERVER_OSS.md)。
+
 从 fork 取实验分支。已有 checkout 时可从该 checkout 执行 `git fetch origin` 和 `git switch experiments/history-edit-scr`。
 
 ```bash
@@ -15,32 +17,28 @@ python -m pip install -U pip
 python -m pip install -e . -e ./suffix_cache_reuse/sglang
 python -m pip check
 python suffix_cache_reuse/sglang/tests/unit_test.py
-nvidia-smi
-
-E=experiments/history_edit_scr
-bash "$E/run.sh" download
 ```
 
-在 Linux/NVIDIA 服务器上安装。SCR 包固定 SGLang 0.5.16，官方该版本的依赖使用 CUDA 13 系列，驱动需要与所装 wheel 兼容。用一张能放下 Qwen3.6-27B BF16、运行时缓存和 side buffer 的卡。权重由服务器用 Hugging Face CLI 下载并保存在 `HF_HOME` 对应的缓存中，需要约 56 GB 磁盘，可在下载前设置 `HF_HOME` 到服务器的持久盘。已有对应 revision 的缓存直接复用。Harbor 验收另外需要 Docker 或 Apptainer。软件安装和首次加载模型的错误会分别出现在安装终端和各组的 `server.log`。
+上面是确认有 Python 3.12 后可用的 venv 示例。使用 Conda 时先创建并激活 Python 3.12 环境，再执行相同的 pip 安装步骤。在 Linux/NVIDIA 服务器上安装。SCR 包固定 SGLang 0.5.16，官方该版本的依赖使用 CUDA 13 系列，驱动需要与所装 wheel 兼容。用一张能放下 Qwen3.6-27B BF16、运行时缓存和 side buffer 的卡。Harbor 验收另外需要 Docker 或 Apptainer。软件安装和首次加载模型的错误会分别出现在安装终端和各组的 `server.log`。
 
 `pins.env` 固定了 CLM fork 的上游基线、SGLang、Qwen 权重与同一 snapshot 的 tokenizer，以及外部两个 benchmark 的源码。Qwen revision 是本次运行选用的公开 snapshot，论文没有给出用于逐字节核对的权重 revision。每个服务日志的首条配置记录保留实验 commit、Torch/CUDA、GPU、模型和 tokenizer revision、tokenizer 文件 hash、启动参数和 SCR 环境。
 
 ## A 与 C 组首轮
 
-在仓库根目录的同一个 Bash 会话执行。先冻结两个基础样本，再依次启动 off 和 on。脚本每次只启动一个服务，并在这一组请求结束后关闭服务。两端口默认 31000 和 31001，执行前保持空闲。
+在仓库根目录的同一个 Bash 会话执行。权重准备和设置 `CLM_MODEL_DIR`、`OUT` 的命令见 [服务器与 OSS](SERVER_OSS.md)。先冻结两个基础样本，再依次启动 off 和 on。脚本每次只启动一个服务，并在这一组请求结束后关闭服务。两端口默认 31000 和 31001，执行前保持空闲。
 
 ```bash
 E=experiments/history_edit_scr
-OUT=results/history-edit-scr
+: "${OUT:?set OUT to the local run eval directory}"
 mkdir -p "$OUT"
 python -m pip freeze > "$OUT/pip-freeze.txt"
 SNAPSHOT=$(bash "$E/run.sh" snapshot)
 
 python "$E/probe.py" prepare "$OUT/clean-2.json" --snapshot "$SNAPSHOT" --cases 2
-CUDA_VISIBLE_DEVICES=0 python "$E/pilot.py" "$OUT/clean-2" --manifest "$OUT/clean-2.json"
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} python "$E/pilot.py" "$OUT/clean-2" --manifest "$OUT/clean-2.json"
 ```
 
-只做 A 组时运行 `CUDA_VISIBLE_DEVICES=0 python "$E/pilot.py" "$OUT/smoke"`。每次使用新的结果目录。用 `tail -f "$OUT/clean-2/on/server.log"` 查看启动与请求日志。
+只做 A 组时运行 `CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} python "$E/pilot.py" "$OUT/smoke"`。每次使用新的结果目录。用 `tail -f "$OUT/clean-2/on/server.log"` 查看启动与请求日志。
 
 两组使用同一个官方入口、BF16、单并发、64K 服务上下文、标准 radix 缓存和相同基础配置。SCR 开启使用 K=6、SSM fork。启动默认复用官方显存比例 0.75。实验入口默认把 side buffer 调成 4 个会话 × 12,000 tokens，按官方 64 KiB/token 估算约 2.93 GiB。4 个槽允许官方隔离回归同时保有近期会话，追踪会话数默认等于槽数。原始服务默认 12 × 30,000 tokens，约 22 GiB。若服务器显存池或任务输入需要调整，给 off/on 统一设置 `MEM_FRACTION_STATIC`、`KVREUSE_SIDE_SESSIONS` 和 `KVREUSE_SIDE_TOKENS`。启动器对两组统一启用 Qwen reasoning parser 以兼容 Harbor 工具续跑。A/C 的模板参数禁用新生成的 thinking。C 的旧判断是可见助手笔记。
 
@@ -53,7 +51,7 @@ CUDA_VISIBLE_DEVICES=0 python "$E/pilot.py" "$OUT/clean-2" --manifest "$OUT/clea
 ```bash
 python "$E/probe.py" prepare "$OUT/full-36.json" --snapshot "$SNAPSHOT" \
   --cases 36 --stage full --stable-controls 4
-CUDA_VISIBLE_DEVICES=0 python "$E/pilot.py" "$OUT/full-36" --manifest "$OUT/full-36.json"
+CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0} python "$E/pilot.py" "$OUT/full-36" --manifest "$OUT/full-36.json"
 ```
 
 生成器检查 W_A/W_B 只差一个 token、warm/probe 共同前缀至少 1,024 tokens、后缀包含至少 1,024 个逐项一致的 token，以及两条 clean 终态完全相同。每条分支以独立 `extra_key` 保存预热和决策，预热至少生成 8 tokens。决策仅判完整的 `ACTION: A` 至 `ACTION: D`，容许首尾空白和大小写差异。无效请求计入无效配对，无法解析的有效输出计作错误。H1 比较 off 中可见计划和 clean。H2 比较同题 clean 的 A/B 旧标签跟随差，再计算 on 减 off，并单列两条 warm 历史都实际命中的样本。区间以基础样本为单位做 percentile bootstrap。默认使用贪心解码和 seed 42。

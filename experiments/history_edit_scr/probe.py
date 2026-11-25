@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import itertools
 import json
+import os
 import random
 import sys
 import urllib.error
@@ -182,8 +183,9 @@ def prepare(args):
     from transformers import AutoTokenizer
 
     snapshot = Path(args.snapshot).resolve()
-    if snapshot.name != PINS["MODEL_REVISION"]:
-        raise ValueError("use the pinned Hugging Face snapshot printed by run.sh snapshot")
+    revision = os.environ.get("CLM_MODEL_REVISION", PINS["MODEL_REVISION"])
+    if snapshot.name != revision:
+        raise ValueError(f"snapshot directory must be named {revision}")
     tokenizer = AutoTokenizer.from_pretrained(snapshot, local_files_only=True)
     if not isinstance(tokenizer.chat_template, str):
         raise ValueError("expected a single pinned Qwen chat template")
@@ -197,8 +199,8 @@ def prepare(args):
     manifest = {
         "schema": 1,
         "model_id": PINS["MODEL_ID"],
-        "model_revision": PINS["MODEL_REVISION"],
-        "tokenizer_revision": PINS["MODEL_REVISION"],
+        "model_revision": revision,
+        "tokenizer_revision": revision,
         "tokenizer_snapshot": str(snapshot),
         "tokenizer_files_sha256": tokenizer_files(snapshot),
         "transformers": version("transformers"),
@@ -255,7 +257,7 @@ def request_probe(url, timeout, common, phase, ids, stream):
 
 def run(args):
     manifest = json.loads(args.manifest.read_text())
-    if manifest["schema"] != 1 or manifest["model_revision"] != PINS["MODEL_REVISION"]:
+    if manifest["schema"] != 1 or manifest["model_revision"] != os.environ.get("CLM_MODEL_REVISION", PINS["MODEL_REVISION"]):
         raise ValueError("manifest schema or model revision differs from this experiment")
     manifest_sha256 = digest(manifest)
     failures = 0

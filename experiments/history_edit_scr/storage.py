@@ -129,14 +129,16 @@ def verify_size(url, size):
         raise ValueError(f"OSS object size verification failed: {url} (expected {size} bytes)")
 
 
-def publish(run, kind):
-    root = run / kind
+def publish(run, kind, subdir=None):
+    if subdir and kind != "eval":
+        raise ValueError("--subdir is supported only for publish-eval")
+    root = run / kind / subdir if subdir else run / kind
     if kind == "model":
         root = model_ready(root / REVISION)
-    prefix = oss_url(MODEL_PREFIX if kind == "model" else f"{kind}/{run.name}")
+    prefix = oss_url(MODEL_PREFIX if kind == "model" else f"{kind}/{run.name}" + (f"/{subdir}" if subdir else ""))
     confirm_unpublished(prefix)
     files = collect_files(root)
-    workspace = run / "transfer" / f"publish-{kind}"
+    workspace = run / "transfer" / (f"publish-{kind}" + (f"-{subdir}" if subdir else ""))
     workspace.mkdir(parents=True, exist_ok=True)
     manifest = workspace / MANIFEST
     marker = workspace / SUCCESS
@@ -205,9 +207,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("run-dir", "model-dir", "stage-model", "publish-model", "publish-eval", "publish-ckpt"))
     parser.add_argument("run_id")
+    parser.add_argument("--subdir", help="publish one eval subdirectory to its own OSS prefix")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id):
         parser.error("run ID must be one directory name")
+    if args.subdir and (args.action != "publish-eval" or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.subdir)):
+        parser.error("--subdir requires publish-eval and a single safe directory name")
     run = local_path(Path(setting("CLM_SCRATCH_ROOT")) / args.run_id)
     if args.action == "run-dir":
         print(run)
@@ -216,7 +221,7 @@ def main():
     elif args.action == "stage-model":
         print(stage_model(run))
     else:
-        publish(run, args.action.removeprefix("publish-"))
+        publish(run, args.action.removeprefix("publish-"), args.subdir)
 
 
 if __name__ == "__main__":

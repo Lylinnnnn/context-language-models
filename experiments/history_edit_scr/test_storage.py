@@ -74,6 +74,19 @@ class StorageTests(unittest.TestCase):
         self.assertEqual((target / "weights.safetensors").read_bytes(), b"weight")
         self.assertFalse((target / ".gitattributes").exists())
 
+    def test_eval_subdir_has_independent_completion_marker(self):
+        root = self.run / "eval"
+        (root / "vllm-smoke").mkdir(parents=True)
+        (root / "vllm-c2").mkdir()
+        (root / "vllm-smoke" / "result.json").write_text("{}")
+        (root / "vllm-c2" / "result.json").write_text('{"pairs": 4}')
+        storage.publish(self.run, "eval")
+        storage.publish(self.run, "eval", "vllm-c2")
+        prefix = storage.oss_url(f"eval/{self.run.name}/vllm-c2")
+        self.assertIn(f"{prefix}/_SUCCESS", self.objects)
+        self.assertEqual(self.objects[f"{prefix}/files/result.json"], b'{"pairs": 4}')
+        self.assertNotIn(f"{prefix}/files/vllm-smoke/result.json", self.objects)
+
 
 if __name__ == "__main__":
     unittest.main()

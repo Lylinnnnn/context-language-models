@@ -1,6 +1,6 @@
 # glibc 2.32 节点的 vLLM SCR 备选 smoke
 
-此目录是独立的服务后端验收，不替代主目录固定 SGLang 0.5.16 的 A/C/B 结果。CLM 仓库自带官方 vLLM SCR，固定 `vllm==0.19.1`。该版 x86_64 wheel 标注 glibc 2.31+，但完整依赖能否安装、H20 上能否加载 Qwen3.6-27B，仍以 GPU 节点实际运行结果为准。此备选从 ModelScope 获取 Qwen3.6-27B，第一次上传到 OSS 后以文件 SHA-256 清单冻结权重与 tokenizer；`pins.env` 的 Hugging Face revision 只属于原 SGLang 路线。这轮先验证官方四轮 smoke 和日志搬迁，随后才移植 C 组固定 token 探针。
+此目录是独立的 vLLM 服务后端验收，固定 `vllm==0.19.1`。已接入官方四轮 smoke 和 C 组固定 token 探针；vLLM 与原 SGLang 路线的数值不可直接合并。模型来自 ModelScope，第一次上传到 OSS 后以文件 SHA-256 清单冻结权重与 tokenizer；`pins.env` 的 Hugging Face revision 只属于原 SGLang 路线。
 
 ## 一次准备
 
@@ -85,6 +85,29 @@ python "$E/storage.py" publish-eval "$RUN_ID"
 下载前检查 `df -h "$RUN"` 及实际配额；安装缓存和权重均留在该 run 的本机目录。上传流程逐文件核对大小，完成标记最后写入；后续运行可由 OSS 暂存同一快照。遇到 OSS 权限或 Endpoint 错误时先处理配置，不将其当作模型不存在。完整路径规则见 [服务器与 OSS](../SERVER_OSS.md#权重和运行目录)。
 
 `pilot.py` 用一张卡依次启动 off 和 on 服务，端口默认 32000 与 32001。它对每组运行仓库内的官方 `suffix_cache_reuse/vllm/tests/smoke.py`，停止服务后调用官方 `analysis/scr_report.py`。验收条件包括 on 组至少一条编辑请求 `relocated > 0`，off 组搬迁量为 0，以及官方 token 守恒检查通过。两个服务除 SCR 开关、端口和输出路径外使用同一组参数。每组的 `server.log`、`smoke.log`、`requests.csv`、`summary.json` 和 `report.log` 留在各自输出目录。
+
+## C 组两例配对探针
+
+已有 `(clm)` 持久 Conda 环境和本机暂存的同一模型时，沿用原来的 `RUN_ID`；不需重新下载权重或重建环境。下面以先前 `vllm-20261125-153822` 为例，若实际 run ID 不同只改第一行。先生成两个反驳型样本的冻结输入，再用同一个 `CLM_MODEL_DIR` 顺序跑 off/on。此次输出使用新目录 `vllm-c2`，官方 smoke 会在每个服务启动后再次跑一遍，作为本轮服务健康和搬迁对照。
+
+```bash
+git pull --ff-only
+conda activate clm
+E=experiments/history_edit_scr
+RUN_ID=vllm-20261125-153822
+source "$E/vllm_fallback/modelscope.env"
+RUN=$(python "$E/storage.py" run-dir "$RUN_ID")
+CLM_MODEL_DIR=$(python "$E/storage.py" model-dir "$RUN_ID")
+export CLM_MODEL_DIR
+test -f "$CLM_MODEL_DIR/model.safetensors.index.json" || { echo '模型不在本机 scratch；先按上节从 OSS stage-model' >&2; exit 1; }
+python "$E/probe.py" prepare "$RUN/eval/vllm-c2-manifest.json" --snapshot "$CLM_MODEL_DIR" --cases 2 --stage clean
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python "$E/vllm_fallback/pilot.py" "$RUN/eval/vllm-c2" --manifest "$RUN/eval/vllm-c2-manifest.json"
+python -m json.tool "$RUN/eval/vllm-c2/probe-summary.json" | head -80
+cp "$RUN/eval/vllm-c2-manifest.json" "$RUN/eval/vllm-c2/manifest-input.json"
+python "$E/storage.py" publish-eval "$RUN_ID" --subdir vllm-c2
+```
+
+结果中的 `valid_pairs` 应等于 `expected_pairs`；`clean_on_hits` 记录有多少 clean 编辑请求在 on 组真正搬迁。即使 `clean_on_hits=0`，脚本也只判定输入/服务证据是否有效，不把零命中误写为行为效应。`probe-joined.jsonl` 保留每个 off/on 分支的 token 数、搬迁量、输出和错误；`probe-summary.json` 汇总组别和配对效应。两例只用于检查管线；正式估计需要扩大到 30–50 个基础样本及重复 seed。上面的 `publish-eval --subdir vllm-c2` 上传到独立的 `eval/<RUN_ID>/vllm-c2/` 前缀，逐文件核对大小、写清单，最后写 `_SUCCESS`；已归档的 `eval/<RUN_ID>/` 不会被改写。
 
 运行失败时，先看对应 `server.log` 的首个异常。若是显存不足，可调低 `VLLM_GPU_MEMORY_UTILIZATION` 或 `KVREUSE_SIDE_SESSIONS`、`KVREUSE_SIDE_TOKENS`，并从新 `RUN_ID` 重跑两组；不要只调其中一组。`VLLM_MAX_MODEL_LEN` 默认 32768，仅用于这轮 smoke。安装状态和服务日志成功之前，结果仍标记为「GPU 待验证」。
 

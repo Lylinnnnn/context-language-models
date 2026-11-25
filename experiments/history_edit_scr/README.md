@@ -11,15 +11,30 @@
 ```bash
 git clone --branch experiments/history-edit-scr https://github.com/Lylinnnnn/context-language-models.git
 cd context-language-models
+getconf GNU_LIBC_VERSION
+```
+
+Linux x86_64 上，SGLang 0.5.16 的 Python 3.12 wheel 需要 glibc 2.34 或更新版本。若系统低于 2.34，先切换到满足要求的 GPU Notebook 或容器镜像。普通 venv 和 Conda 环境都使用当前系统或容器的 glibc。pip 候选版本停在 0.5.10.post1 与新版 wheel 被 glibc 过滤的现象吻合，也可能是配置的镜像源尚未同步。 [SGLang 0.5.16 发布文件](https://pypi.org/project/sglang/0.5.16/#files)
+
+确认 glibc 满足要求后，创建并激活一个 Python 3.12 环境。
+
+```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -e . -e ./suffix_cache_reuse/sglang
-python -m pip check
+```
+
+使用 Conda 时，先退出已激活的 venv，再运行 `conda create -n clm-scr python=3.12 pip` 和 `conda activate clm-scr`。使用统一环境安装两个项目，并在安装成功后验证依赖和 GPU。
+
+```bash
+python -m pip install -e . -e ./suffix_cache_reuse/sglang &&
+python -m pip check &&
+python -c 'import torch, sglang; assert torch.cuda.is_available(); print(sglang.__version__, torch.__version__, torch.version.cuda, torch.cuda.get_device_name(0))' &&
 python suffix_cache_reuse/sglang/tests/unit_test.py
 ```
 
-上面是确认有 Python 3.12 后可用的 venv 示例。使用 Conda 时先创建并激活 Python 3.12 环境，再执行相同的 pip 安装步骤。在 Linux/NVIDIA 服务器上安装。SCR 包固定 SGLang 0.5.16，官方该版本的依赖使用 CUDA 13 系列，驱动需要与所装 wheel 兼容。用一张能放下 Qwen3.6-27B BF16、运行时缓存和 side buffer 的卡。Harbor 验收另外需要 Docker 或 Apptainer。软件安装和首次加载模型的错误会分别出现在安装终端和各组的 `server.log`。
+glibc 版本满足要求而现有 pip 源仍缺 0.5.16 时，若节点能访问官方 PyPI，对上面的安装命令加 `--index-url https://pypi.org/simple`。也可请管理员同步该版本及其依赖。一次失败的安装仍可能让 `pip check` 或纯 CPU 单测返回成功，验收以安装成功且 Torch、SGLang 和 CUDA 检查通过为准。
+
+在 Linux/NVIDIA 服务器上安装。SCR 包固定 SGLang 0.5.16，官方该版本的依赖使用 CUDA 13 系列，驱动需要与所装 wheel 兼容。用一张能放下 Qwen3.6-27B BF16、运行时缓存和 side buffer 的卡。Harbor 验收另外需要 Docker 或 Apptainer。软件安装和首次加载模型的错误会分别出现在安装终端和各组的 `server.log`。
 
 `pins.env` 固定了 CLM fork 的上游基线、SGLang、Qwen 权重与同一 snapshot 的 tokenizer，以及外部两个 benchmark 的源码。Qwen revision 是本次运行选用的公开 snapshot，论文没有给出用于逐字节核对的权重 revision。每个服务日志的首条配置记录保留实验 commit、Torch/CUDA、GPU、模型和 tokenizer revision、tokenizer 文件 hash、启动参数和 SCR 环境。
 

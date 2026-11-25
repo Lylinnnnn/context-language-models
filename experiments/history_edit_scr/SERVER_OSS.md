@@ -6,6 +6,7 @@
 
 ```bash
 uname -sm
+getconf GNU_LIBC_VERSION
 grep '^PRETTY_NAME=' /etc/os-release
 nvidia-smi --query-gpu=index,name,driver_version,memory.total,memory.free --format=csv
 python3 --version
@@ -18,7 +19,7 @@ findmnt -T /data/oss_bucket_0/yanlin -o TARGET,FSTYPE
 ossutil version
 ```
 
-机器有 Python 3.12 且能创建 venv 时可以用 venv。若机器已经使用 Conda 管理 Python，可以用 `conda create -n clm-scr python=3.12 pip` 和 `conda activate clm-scr`。激活选定环境后执行 [依赖安装](README.md#服务器环境) 中的 pip 命令。若从 Slurm 获得设备，保留作业分配的 `CUDA_VISIBLE_DEVICES`。
+确认当前系统或容器的 glibc 至少为 2.34 后再创建环境。机器有 Python 3.12 且能创建 venv 时可以用 venv。若机器已经使用 Conda 管理 Python，可以用 `conda create -n clm-scr python=3.12 pip` 和 `conda activate clm-scr`。激活选定环境后执行 [依赖安装](README.md#服务器环境) 中的 pip 命令。若从 Slurm 获得设备，保留作业分配的 `CUDA_VISIBLE_DEVICES`。
 
 ## 确认 OSS
 

@@ -52,17 +52,22 @@ RUN_ID="cb-full-s42-$(date -u +%Y%m%dT%H%M%SZ)"
 python "$E/contextbench_apptainer/full_seed42.py" "$RUN_ID" --gpus 0,1,2,3,4,5,6,7
 ```
 
-运行中每题的 Harbor 输出在 `/tmp/clm/<RUN_ID>/eval/contextbench-s42-vllm-off/logs/`，原版 trial、评分和轨迹在 `trials/`，服务日志在 `servers/`。`manifest.json` 记录固定任务和 shard，`summary.json` 汇总完成数与平均 reward；脚本只有 32/32 题都有正式评分才返回 0。中途失败后先修复原因，再以**同一个** `RUN_ID` 加 `--resume`，已通过的题会从保存的 `result.json` 重新核验并跳过：
+运行中每题的 Harbor 输出在 `/tmp/clm/<RUN_ID>/eval/contextbench-s42-vllm-off/logs/`，原版 trial、评分和轨迹在 `trials/`，服务日志在 `servers/`。`manifest.json` 记录固定任务和 shard，`summary.json` 汇总完成数与平均 reward。脚本只有 32/32 题都有正式评分，且 OSS 上传核验和本机结果清理均成功，才返回 0。中途失败后先修复原因，再以**同一个** `RUN_ID` 加 `--resume`，已通过的题会从保存的 `result.json` 重新核验并跳过：
 
 ```bash
 python "$E/contextbench_apptainer/full_seed42.py" "$RUN_ID" --gpus 0,1,2,3,4,5,6,7 --resume
 ```
 
-32/32 完成后再归档评测结果：
+32/32 完成后脚本自动把该评测子目录归档到 OSS，重新下载远端 manifest 和 `_SUCCESS`、核对本机逐文件 SHA-256 清单与远端逐文件大小；全部通过才删除该 run 下的 `eval/contextbench-s42-vllm-off`、上传中转文件及这次八张卡的 FlashInfer 临时编译缓存。模型、Conda 环境、其他评测目录保持可用。可用下面的只读命令核对完成标记：
 
 ```bash
-python "$E/storage.py" publish-eval "$RUN_ID" --subdir contextbench-s42-vllm-off
 ossutil stat "oss://industry-algo/yanlin/clm/eval/$RUN_ID/contextbench-s42-vllm-off/_SUCCESS"
+```
+
+已经由旧版脚本跑完但还未清理的同类评测，可单独执行通用收尾命令；它也能核验之前已上传的同一结果后再清理：
+
+```bash
+python "$E/storage.py" publish-eval "$RUN_ID" --subdir contextbench-s42-vllm-off --cleanup
 ```
 
 这组保持单题试跑验证过的 vLLM 0.19.1、Qwen3.6-27B、`ClmStream` 和 SCR **off** 配置；论文中 SGLang 后端和 8 seed 统计不能用这组结果代替。若要做 SCR on 对照，在另一轮使用新的 `RUN_ID` 和 `--mode on`，同一份 seed 42 任务会按相同 shard 规则运行，输出目录是 `contextbench-s42-vllm-on`。

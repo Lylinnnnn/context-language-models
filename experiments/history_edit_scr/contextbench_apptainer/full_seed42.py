@@ -7,6 +7,7 @@ from importlib.metadata import version
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import socket
 import subprocess
@@ -20,6 +21,7 @@ EXPERIMENT = HERE.parent
 REPO = HERE.parents[2]
 FAMILIES = ("kv-store", "log-triage", "needle-retention", "sudoku-sketchpad")
 EXPECTED_COUNTS = (8, 7, 10, 7)
+PRE_AUTOPUBLISH_COMMIT = "cfadf111058ef7547af7c3e5bbdca97425d7c2df"
 
 
 def git_head(path):
@@ -238,8 +240,15 @@ def main():
                 "max_model_len": 40960, "tool_call_parser": "qwen3_coder"}
     manifest_path = root / "manifest.json"
     if manifest_path.exists():
-        if not args.resume or json.loads(manifest_path.read_text()) != manifest:
+        previous = json.loads(manifest_path.read_text())
+        same_except_commit = all(previous.get(key) == value for key, value in manifest.items()
+                                 if key != "clm_commit")
+        compatible_old_runner = (previous.get("clm_commit") == PRE_AUTOPUBLISH_COMMIT
+                                 and same_except_commit)
+        if not args.resume or (previous != manifest and not compatible_old_runner):
             parser.error(f"Output already exists or configuration changed: {root}; use --resume with identical inputs")
+        if compatible_old_runner and previous != manifest:
+            print("Resuming run created before automatic OSS publication; trial inputs are unchanged", flush=True)
     else:
         if args.resume:
             parser.error(f"Cannot resume without manifest: {manifest_path}")
@@ -281,7 +290,23 @@ def main():
                                if passed else None), "families": family_summary, "tasks": statuses}
     write_json(root / "summary.json", summary)
     print(f"Completed {len(passed)}/32; summary {root / 'summary.json'}", flush=True)
-    return 0 if len(passed) == 32 and not errors else 1
+    if len(passed) != 32 or errors:
+        print("Local results retained for --resume; OSS publication skipped", flush=True)
+        return 1
+    subprocess.run([
+        sys.executable, str(EXPERIMENT / "storage.py"), "publish-eval", args.run_id,
+        "--subdir", root.name, "--cleanup",
+    ], check=True)
+    if (run / "tmp").is_symlink():
+        raise RuntimeError(f"Refusing to remove caches through symlinked temp directory: {run / 'tmp'}")
+    for gpu in gpus:
+        cache = run / "tmp" / f"flashinfer-cb-gpu{gpu}"
+        if cache.is_symlink():
+            raise RuntimeError(f"Refusing to remove symlinked JIT cache: {cache}")
+        if cache.is_dir():
+            shutil.rmtree(cache)
+    print("OSS publication verified; local eval copy removed", flush=True)
+    return 0
 
 
 if __name__ == "__main__":

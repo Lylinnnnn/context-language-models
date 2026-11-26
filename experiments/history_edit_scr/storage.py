@@ -162,6 +162,48 @@ def publish(run, kind, subdir=None):
     print(f"{prefix}/{SUCCESS}")
 
 
+def verify_published_eval(run, subdir):
+    """Check the remote completion marker, manifest, and every published file size."""
+    root = run / "eval" / subdir
+    files = collect_files(root)
+    prefix = oss_url(f"eval/{run.name}/{subdir}")
+    workspace = run / "transfer" / f"publish-eval-{subdir}"
+    workspace.mkdir(parents=True, exist_ok=True)
+    remote_manifest = workspace / "verified-manifest.json"
+    remote_marker = workspace / "verified-_SUCCESS"
+    copy_file(f"{prefix}/{MANIFEST}", remote_manifest, workspace)
+    copy_file(f"{prefix}/{SUCCESS}", remote_marker, workspace)
+    if remote_marker.read_text(encoding="utf-8").strip() != file_sha(remote_manifest):
+        raise ValueError(f"OSS completion marker does not match the manifest: {prefix}")
+    manifest = json.loads(remote_manifest.read_text(encoding="utf-8"))
+    if manifest.get("kind") != "eval" or manifest.get("files") != files:
+        raise ValueError(f"OSS eval manifest differs from the local result: {prefix}")
+    verify_size(f"{prefix}/{MANIFEST}", remote_manifest.stat().st_size)
+    verify_size(f"{prefix}/{SUCCESS}", remote_marker.stat().st_size)
+    for name, entry in files.items():
+        verify_size(f"{prefix}/files/{name}", entry["size"])
+    return prefix, workspace
+
+
+def publish_eval_and_cleanup(run, subdir):
+    """Publish one eval directory, verify OSS, then remove only that local eval copy."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", subdir):
+        raise ValueError(f"invalid eval subdirectory: {subdir!r}")
+    root = run / "eval" / subdir
+    if (run / "eval").is_symlink() or (run / "transfer").is_symlink() or root.is_symlink() or not root.is_dir():
+        raise ValueError(f"expected a local eval directory: {root}")
+    prefix = oss_url(f"eval/{run.name}/{subdir}")
+    try:
+        publish(run, "eval", subdir)
+    except ValueError as exc:
+        if str(exc) != f"already published: {prefix}":
+            raise
+    verified_prefix, workspace = verify_published_eval(run, subdir)
+    shutil.rmtree(workspace)
+    shutil.rmtree(root)
+    print(f"verified on OSS and removed local eval copy: {verified_prefix}")
+
+
 def stage_model(run):
     target = run / "model" / REVISION
     if target.exists():
@@ -208,11 +250,14 @@ def main():
     parser.add_argument("action", choices=("run-dir", "model-dir", "stage-model", "publish-model", "publish-eval", "publish-ckpt"))
     parser.add_argument("run_id")
     parser.add_argument("--subdir", help="publish one eval subdirectory to its own OSS prefix")
+    parser.add_argument("--cleanup", action="store_true", help="verify published eval files, then remove that local eval subdirectory")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id):
         parser.error("run ID must be one directory name")
     if args.subdir and (args.action != "publish-eval" or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.subdir)):
         parser.error("--subdir requires publish-eval and a single safe directory name")
+    if args.cleanup and (args.action != "publish-eval" or not args.subdir):
+        parser.error("--cleanup requires publish-eval --subdir NAME")
     run = local_path(Path(setting("CLM_SCRATCH_ROOT")) / args.run_id)
     if args.action == "run-dir":
         print(run)
@@ -220,6 +265,8 @@ def main():
         print(run / "model" / REVISION)
     elif args.action == "stage-model":
         print(stage_model(run))
+    elif args.cleanup:
+        publish_eval_and_cleanup(run, args.subdir)
     else:
         publish(run, args.action.removeprefix("publish-"), args.subdir)
 

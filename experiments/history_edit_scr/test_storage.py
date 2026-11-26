@@ -87,6 +87,49 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(self.objects[f"{prefix}/files/result.json"], b'{"pairs": 4}')
         self.assertNotIn(f"{prefix}/files/vllm-smoke/result.json", self.objects)
 
+    def test_eval_cleanup_requires_verified_oss_copy(self):
+        root = self.run / "eval" / "full-s42"
+        root.mkdir(parents=True)
+        (root / "summary.json").write_text('{"completed": 32}')
+        prefix = storage.oss_url(f"eval/{self.run.name}/full-s42")
+
+        self.bad_size = True
+        with self.assertRaisesRegex(ValueError, "size verification failed"):
+            storage.publish_eval_and_cleanup(self.run, "full-s42")
+        self.assertTrue(root.exists())
+        self.assertNotIn(f"{prefix}/_SUCCESS", self.objects)
+
+        self.bad_size = False
+        storage.publish_eval_and_cleanup(self.run, "full-s42")
+        self.assertFalse(root.exists())
+        self.assertFalse((self.run / "transfer" / "publish-eval-full-s42").exists())
+        self.assertIn(f"{prefix}/_SUCCESS", self.objects)
+
+    def test_eval_cleanup_rejects_changed_local_result_after_publication(self):
+        root = self.run / "eval" / "full-s42"
+        root.mkdir(parents=True)
+        result = root / "summary.json"
+        result.write_text('{"completed": 32}')
+        storage.publish(self.run, "eval", "full-s42")
+        result.write_text('{"completed": 31}')
+        with self.assertRaisesRegex(ValueError, "manifest differs"):
+            storage.publish_eval_and_cleanup(self.run, "full-s42")
+        self.assertTrue(root.exists())
+        result.write_text('{"completed": 32}')
+        storage.publish_eval_and_cleanup(self.run, "full-s42")
+        self.assertFalse(root.exists())
+
+    def test_eval_cleanup_rejects_invalid_remote_completion_marker(self):
+        root = self.run / "eval" / "full-s42"
+        root.mkdir(parents=True)
+        (root / "summary.json").write_text('{"completed": 32}')
+        storage.publish(self.run, "eval", "full-s42")
+        prefix = storage.oss_url(f"eval/{self.run.name}/full-s42")
+        self.objects[f"{prefix}/_SUCCESS"] = b"0" * 64 + b"\n"
+        with self.assertRaisesRegex(ValueError, "completion marker does not match"):
+            storage.publish_eval_and_cleanup(self.run, "full-s42")
+        self.assertTrue(root.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

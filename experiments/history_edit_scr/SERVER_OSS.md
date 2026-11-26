@@ -84,6 +84,8 @@ python "$E/storage.py" publish-model "$RUN_ID"
 python "$E/storage.py" publish-eval "$RUN_ID"
 ```
 
-上传按清单逐文件进行，之后用 `ossutil stat` 核对每个对象的字节数，最后写入 SHA-256 绑定的 `manifest.json` 和 `_SUCCESS`。续传元数据位于 `$RUN/transfer`。传输中断可用同一个 `RUN_ID` 重试，已完成前缀会拒绝覆写。只有验证成功并确认该 run 的产物齐全后，才手动清理它自己的 scratch。推理权重或 LoRA adapter 只提供模型参数，续训还要保留训练框架要求的优化器、step、随机数等状态。
+上传按清单逐文件进行，之后用 `ossutil stat` 核对每个对象的字节数，最后写入 SHA-256 绑定的 `manifest.json` 和 `_SUCCESS`。续传元数据位于 `$RUN/transfer`。传输中断可用同一个 `RUN_ID` 重试，已完成前缀会拒绝覆写。只有验证成功并确认该 run 的产物齐全后，才清理它自己的 scratch。推理权重或 LoRA adapter 只提供模型参数，续训还要保留训练框架要求的优化器、step、随机数等状态。
+
+对已经完成的单个评测子目录，可调用 `python "$E/storage.py" publish-eval "$RUN_ID" --subdir NAME --cleanup`。这个可复用入口在上传后重新读取 OSS 的 manifest 与 `_SUCCESS`，比对本机逐文件 SHA-256 清单及远端文件大小，全部通过才自动删除该 run 的 `eval/NAME` 和相应传输工作区。已发布的同一结果也可用它核验后清理；任何核验失败都会保留本机结果。其他评测目录、模型权重和环境不受影响。
 
 [上传和续传](https://www.alibabacloud.com/help/en/oss/developer-reference/cp-upload-file) · [对象大小核对](https://www.alibabacloud.com/help/en/oss/developer-reference/stat)

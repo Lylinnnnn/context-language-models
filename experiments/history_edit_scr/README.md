@@ -127,6 +127,27 @@ bash "$E/run.sh" contextbench off "$OUT/manual"
 
 ### BrowseComp-Plus 配对
 
+先准备官方数据。ContextBench 的原版任务随其源码仓库的 `tasks/` 提供；BCP 的原题、语料和预建索引分别在 Hugging Face 的 `Tevatron/browsecomp-plus`、`Tevatron/browsecomp-plus-corpus`、`Tevatron/browsecomp-plus-indexes`。下面的下载器使用 `huggingface_hub`，默认经 HF-Mirror 获取文件，在本机 scratch 暂存，再按逐文件大小核验上传到 OSS 的 `data/<DATA_RUN>/`，写 `_SUCCESS` 后删除该次暂存目录。失败时保留暂存，使用相同 `DATA_RUN` 重试；若镜像失效，设置 `HF_ENDPOINT=https://huggingface.co` 重试。不会上传解密后的题目或 Hugging Face 下载缓存。尚未验证这些数据在 ModelScope 上有同版本发布，不以第三方同名数据替代。模型权重已经另行归档，不在此重复下载。
+
+```bash
+conda activate clm
+E=experiments/history_edit_scr
+source "$E/pins.env"
+CLM_REPO=$(git rev-parse --show-toplevel)
+CB_REPO="$(dirname "$CLM_REPO")/ContextBench"
+BCP_REPO="$(dirname "$CLM_REPO")/BrowseComp-Plus"
+test -e "$CB_REPO" || git clone https://github.com/RulinShao/ContextBench.git "$CB_REPO"
+git -C "$CB_REPO" checkout --detach "$CB_REVISION"
+test -e "$BCP_REPO" || git clone https://github.com/texttron/BrowseComp-Plus.git "$BCP_REPO"
+git -C "$BCP_REPO" checkout --detach "$BCP_REVISION"
+test -d "$CB_REPO/tasks"
+DATA_RUN="bcp-data-$(date -u +%Y%m%dT%H%M%SZ)"
+python "$E/official_data.py" "$DATA_RUN"
+ossutil stat "oss://industry-algo/yanlin/clm/data/$DATA_RUN/_SUCCESS"
+```
+
+源码 checkout 是小文件，位于持久 home；BCP 大数据只在 OSS 留正式副本。若服务器中已有这两个源码 checkout，先用 `git -C "$CB_REPO" rev-parse HEAD` 等命令检查版本，不覆盖现有修改。BCP 的原始数据到位不代表 Harbor 任务包、检索工具和判分器已对齐；这些仍需另行接入和验收。
+
 按 BrowseComp-Plus 的官方说明准备原始题、固定 corpus、检索器和索引、judge。CLM 的公开入口接收现成 Harbor 任务目录，仓库未提供含这些资源的 BCP Harbor 任务包。将已经准备的任务目录放在 `BCP_TASK_ROOT`，每个任务包含 `task.toml`、`instruction.md`、`environment/` 和 `tests/`。在 `BCP_TASK_LIST` 每行写一个目录名，冻结 8–16 题。用 `BCP_PROVENANCE` 指向 JSON，填写 `corpus_revision`、`queries_revision`、`retriever`、`index_revision`、`judge_revision` 的真实值。
 
 ```bash

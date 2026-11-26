@@ -53,6 +53,11 @@ assert version('harbor') == '0.16.1', 'Expected harbor==0.16.1'
 import contextbench, clm_contextbench
 print('Harbor and ContextBench imports OK')
 PY
+harbor_help=$(harbor trials start --help)
+[[ $harbor_help == *--environment-kwarg* ]] || {
+  echo "This Harbor CLI does not support --environment-kwarg" >&2
+  exit 2
+}
 
 run=$(python "$experiment/storage.py" run-dir "$run_id")
 out="$run/eval/contextbench-kv-s42-vllm-off"
@@ -94,8 +99,8 @@ done
 (( ready == 1 )) || { echo "vLLM did not become ready; see $out/off/server.log" >&2; exit 1; }
 
 harbor trials start -p "$task" -e singularity \
-  --ek "singularity_image_cache_dir=$image_cache" \
-  --ek "singularity_no_mount=home,tmp,bind-paths,proc" \
+  --environment-kwarg "singularity_image_cache_dir=$image_cache" \
+  --environment-kwarg "singularity_no_mount=home,tmp,bind-paths,proc" \
   -a clm_contextbench:ClmStream -m openai/qwen36-27b \
   --agent-kwarg "api_base=http://127.0.0.1:$port/v1" \
   --trial-name contextbench-kv-store-R1000-seed42-vllm-off \

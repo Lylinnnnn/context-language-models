@@ -27,3 +27,5 @@ bash "$E/contextbench_apptainer/pilot.sh" "$RUN_ID"
 ```
 
 `pilot.sh` 自动启动 off 服务，等 `/v1/models` 就绪后只跑一题，并在退出时停止自己启动的服务。日志在 `/tmp/clm/<RUN_ID>/eval/contextbench-kv-s42-vllm-off/off/`；Harbor trial 与评分在其 `trials/` 子目录。成功检查评分和轨迹之后，可用 `python "$E/storage.py" publish-eval "$RUN_ID" --subdir contextbench-kv-s42-vllm-off` 独立归档到 OSS。若构建镜像时 `/proc` 警告但命令成功，可继续；若 trial 报错，先查看 `server.log` 和 trial 日志的首个异常。
+
+每次重试使用新的 `RUN_ID`，保留上次的 `server.log` 与失败现场。入口在启动 GPU 服务前检查当前 Harbor CLI 是否支持所需的 `--environment-kwarg`。

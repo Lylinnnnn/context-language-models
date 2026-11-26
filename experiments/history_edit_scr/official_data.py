@@ -32,9 +32,13 @@ def main():
 
     run = local_path(Path(setting("CLM_SCRATCH_ROOT")) / args.run_id)
     sources_file = run / "data" / "sources.json"
-    if run.exists() and not sources_file.is_file():
-        parser.error(f"existing scratch directory has no source revisions: {run}")
-    run.mkdir(parents=True, exist_ok=True)
+    marker_file = run / ".official-data-run"
+    if run.exists():
+        if not marker_file.is_file() or marker_file.read_text() != "bcp-data\n":
+            parser.error(f"scratch directory was not created by this downloader: {run}")
+    else:
+        run.mkdir(parents=True)
+        marker_file.write_text("bcp-data\n")
     os.environ["HF_ENDPOINT"] = args.endpoint
     os.environ["HF_HOME"] = str(run / "hf-cache")
     from huggingface_hub import HfApi, snapshot_download

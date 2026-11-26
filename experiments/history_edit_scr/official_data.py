@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from probe import PINS
-from storage import copy_file, file_sha, local_path, oss_url, publish, setting
+from storage import collect_files, copy_file, file_sha, local_path, oss_url, ossutil, publish, setting, verify_size
 
 
 DATASETS = {
@@ -19,6 +19,23 @@ DATASETS = {
     "corpus": "Tevatron/browsecomp-plus-corpus",
     "indexes": "Tevatron/browsecomp-plus-indexes",
 }
+
+
+def verify_published(run, prefix):
+    workspace = run / "transfer" / "verify-data"
+    workspace.mkdir(parents=True, exist_ok=True)
+    manifest = workspace / "manifest.json"
+    marker = workspace / "_SUCCESS"
+    copy_file(f"{prefix}/manifest.json", manifest, workspace)
+    copy_file(f"{prefix}/_SUCCESS", marker, workspace)
+    if marker.read_text(encoding="utf-8").strip() != file_sha(manifest):
+        raise ValueError("OSS completion marker does not match the uploaded manifest")
+    published = json.loads(manifest.read_text(encoding="utf-8"))
+    local_files = collect_files(run / "data")
+    if published.get("kind") != "data" or published.get("files") != local_files:
+        raise ValueError("OSS file manifest differs from the local downloaded datasets")
+    for name, entry in local_files.items():
+        verify_size(f"{prefix}/files/{name}", entry["size"])
 
 
 def main():
@@ -70,17 +87,11 @@ def main():
                    for path in directory.rglob("*")):
             raise ValueError(f"no dataset files downloaded in {directory}")
     # storage.publish verifies every uploaded size and writes manifest.json then _SUCCESS.
-    remote_success = oss_url(f"data/{args.run_id}/_SUCCESS")
-    remote_status = subprocess.run([os.environ.get("OSSUTIL", "ossutil"), "stat", remote_success],
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    prefix = oss_url(f"data/{args.run_id}")
+    remote_status = ossutil("stat", f"{prefix}/_SUCCESS", capture=True, check=False)
     if remote_status.returncode:
         publish(run, "data")
-    marker = run / "transfer" / "publish-data" / "_SUCCESS"
-    remote_marker = run / "transfer" / "publish-data" / "_SUCCESS.remote"
-    prefix = oss_url(f"data/{args.run_id}")
-    copy_file(f"{prefix}/_SUCCESS", remote_marker, run / "transfer" / "publish-data")
-    if file_sha(marker) != file_sha(remote_marker):
-        raise ValueError("OSS completion marker differs from the local marker")
+    verify_published(run, prefix)
     print(f"VERIFIED {prefix}/_SUCCESS", flush=True)
     if not args.keep_scratch:
         shutil.rmtree(run)

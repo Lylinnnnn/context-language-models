@@ -114,6 +114,8 @@ python "$E/report.py" "$OUT/manual" --manifest "$OUT/clean-2.json" --require-cle
 
 ### ContextBench KV Store
 
+在当前 glibc 2.32 节点使用无特权 Apptainer 和已验证的 vLLM fallback 时，先按 [单题 Apptainer 试跑](contextbench_apptainer/README.md) 验收 Harbor、原版任务流与评分。该入口只运行 off 组的一题，不等同于论文 SGLang SCR 数值复现。
+
 用冻结的源码 checkout 保留原任务、方法 skill 和容器里的官方 scorer。在服务存活时运行，保存原版 trial 与 `verifier/` 输出。该命令用公开 `ClmStream` 默认预算，样本为仓库内预打包的 `kv-store-R1000-seed42`。
 
 ```bash

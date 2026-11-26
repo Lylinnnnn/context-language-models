@@ -87,9 +87,14 @@ print("[history-edit-vllm-config] " + json.dumps({
     "kvreuse_env": {key: value for key, value in os.environ.items() if key.startswith("KVREUSE_")},
 }, sort_keys=True, default=str), flush=True)
 PY
+    tool_args=()
+    if [[ ${VLLM_ENABLE_AUTO_TOOL_CHOICE:-0} == 1 ]]; then
+      tool_args=(--enable-auto-tool-choice --tool-call-parser "${VLLM_TOOL_CALL_PARSER:-qwen3_coder}")
+    fi
     exec "$py" -m vllm_scr.serve "$model_dir" \
       --served-model-name qwen36-27b --enable-prefix-caching \
       --language-model-only --reasoning-parser qwen3 \
+      "${tool_args[@]}" \
       --host 127.0.0.1 --port "$port" --dtype bfloat16 \
       --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION:-0.80}" \
       --max-model-len "${VLLM_MAX_MODEL_LEN:-32768}" --max-num-seqs 1

@@ -4,6 +4,8 @@
 
 本入口运行固定原版任务 `kv-store-R1000-seed42`，使用现有 `clm` Conda 环境、ModelScope 归档的 Qwen3.6-27B 和 vLLM SCR fallback 的 **off** 服务。它把 vLLM 上下文上限设为至少 40,960 tokens，与 ContextBench 的 32,768 预算和 8,192 最大输出相加一致；同一任务的论文结果还需要核对完整任务时限、模型 revision、SGLang 后端和镜像基础层。此试跑只验收端到端 agent、任务流和评分。
 
+ContextBench agent 使用 `tool_choice="auto"`，入口只对本次服务启用 vLLM 的 `--enable-auto-tool-choice --tool-call-parser qwen3_coder`。Harbor 可能在 trial 出错时仍以状态码 0 退出；入口会检查唯一的 `result.json`，要求没有 `exception_info` 且已经生成 `verifier_result`，否则以失败退出。
+
 先把带 `/usr/bin/python3` 和 `/opt/harbor-server` 的 ContextBench 镜像放在 `/tmp/clm/contextbench-image-cache/python_3.12-slim.sif`。原版任务的镜像名是 `python:3.12-slim`，Harbor 在指定缓存目录中寻找该文件。镜像构建失败时保留日志，不使用普通 Python smoke SIF 代替。
 
 ```bash

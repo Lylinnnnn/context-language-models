@@ -19,6 +19,8 @@ image_cache=${CLM_CB_IMAGE_CACHE:-/tmp/clm/contextbench-image-cache}
 apptainer_home=${CLM_APPTAINER_HOME:-"$HOME/.local/opt/apptainer-1.5.5"}
 port=${VLLM_OFF_PORT:-32000}
 export VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN:-40960}
+export VLLM_ENABLE_AUTO_TOOL_CHOICE=1
+export VLLM_TOOL_CALL_PARSER=qwen3_coder
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 export APPTAINER_CACHEDIR=${APPTAINER_CACHEDIR:-/tmp/clm/apptainer-cache}
 export APPTAINER_TMPDIR=${APPTAINER_TMPDIR:-/tmp/clm/apptainer-tmp}
@@ -106,4 +108,19 @@ harbor trials start -p "$task" -e singularity \
   --trial-name contextbench-kv-store-R1000-seed42-vllm-off \
   --trials-dir "$out/off/trials"
 
-echo "Trial finished. Inspect: $out/off/trials"
+python - "$out/off/trials" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+results = list(Path(sys.argv[1]).rglob("result.json"))
+if len(results) != 1:
+    sys.exit(f"Expected one Harbor trial result, found {len(results)} in {sys.argv[1]}")
+result = json.loads(results[0].read_text(encoding="utf-8"))
+error = result.get("exception_info")
+if error:
+    sys.exit(f"Harbor trial failed: {error.get('exception_type')}: {error.get('exception_message')}")
+if result.get("verifier_result") is None:
+    sys.exit(f"Harbor trial has no verifier result: {results[0]}")
+print(f"Harbor trial and verifier completed. Inspect: {results[0]}")
+PY

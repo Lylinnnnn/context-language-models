@@ -37,6 +37,16 @@ ossutil ls oss://industry-algo/yanlin/clm/
 
 [ossutil 配置](https://help.aliyun.com/zh/oss/developer-reference/ossutil-overview/) · [RAM 前缀授权](https://help.aliyun.com/en/oss/user-guide/access-control-base-on-ram-policy) · [OSS 目录](https://help.aliyun.com/en/oss/user-guide/manage-directories) · [ossutil 版本差异](https://help.aliyun.com/en/oss/developer-reference/1-0-and-2-0-functional-differences)
 
+## 三处路径的职责
+
+| 位置 | 保留内容 | 结束条件 |
+| --- | --- | --- |
+| OSS `yanlin/clm/` | 固定数据、权重、完整 checkpoint、评测结果和完成标记 | 正式产物长期保留 |
+| 本机 `/tmp/clm/<run_id>/` | 本批任务正在读写的权重、checkpoint、评测输出、JIT 和传输暂存 | 结果上传并核验后清理；共享权重在最后一个使用者结束后清理 |
+| 服务器 home | `clm` Conda 环境、源码 checkout、Apptainer 可执行文件及 OSS 配置 | 跨 Notebook 重启复用；不上传到 CLM 产物前缀 |
+
+`/data/oss_bucket_0/yanlin/clm/` 是 OSS 的挂载读取路径，`ossutil` 执行上传和核验；两者的权限可能不同。临时安装脚本用完后删除，持久逻辑保存在仓库的 `experiments/history_edit_scr/`。
+
 ## 权重和运行目录
 
 [默认路径](storage.env) 可通过环境变量覆盖。以挂载读取固定数据，随机读吞吐不足时缓存到本机。运行时权重、训练状态、合并与传输临时文件写在本机 scratch，完成的产物再由 ossutil 归档。下面的传输脚本按 ossutil 2.x 的 `cp`、`stat` 及续传参数编写。模型约 56 GB，换用本地 NVMe 时先设置 `CLM_SCRATCH_ROOT` 为实际挂载位置，再检查可用字节、配额和临时目录是否由作业回收。
@@ -86,6 +96,6 @@ python "$E/storage.py" publish-eval "$RUN_ID"
 
 上传按清单逐文件进行，之后用 `ossutil stat` 核对每个对象的字节数，最后写入 SHA-256 绑定的 `manifest.json` 和 `_SUCCESS`。续传元数据位于 `$RUN/transfer`。传输中断可用同一个 `RUN_ID` 重试，已完成前缀会拒绝覆写。只有验证成功并确认该 run 的产物齐全后，才清理它自己的 scratch。推理权重或 LoRA adapter 只提供模型参数，续训还要保留训练框架要求的优化器、step、随机数等状态。
 
-对已经完成的单个评测子目录，可调用 `python "$E/storage.py" publish-eval "$RUN_ID" --subdir NAME --cleanup`。这个可复用入口在上传后重新读取 OSS 的 manifest 与 `_SUCCESS`，比对本机逐文件 SHA-256 清单及远端文件大小，全部通过才自动删除该 run 的 `eval/NAME` 和相应传输工作区。已发布的同一结果也可用它核验后清理；任何核验失败都会保留本机结果。其他评测目录、模型权重和环境不受影响。
+对已经完成的单个评测子目录，可调用 `python "$E/storage.py" publish-eval "$RUN_ID" --subdir NAME --cleanup`。同一个收尾入口还支持完成训练后的 `publish-ckpt "$RUN_ID" --cleanup`，以及全部依赖共享权重的任务结束后的 `publish-model "$MODEL_RUN_ID" --cleanup`。它在上传后重新读取 OSS 的 manifest 与 `_SUCCESS`，比对本机逐文件 SHA-256 清单及远端文件大小，全部通过才删除对应的本机产物和传输工作区；任何核验失败都会保留本机结果。`publish-ckpt` 核验文件传输完整性，训练框架仍须先确认其中包含优化器、步数和随机数等可续训状态。
 
 [上传和续传](https://www.alibabacloud.com/help/en/oss/developer-reference/cp-upload-file) · [对象大小核对](https://www.alibabacloud.com/help/en/oss/developer-reference/stat)

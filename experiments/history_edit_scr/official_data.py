@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from probe import PINS
-from storage import collect_files, copy_file, file_sha, local_path, oss_url, ossutil, publish, setting, verify_size
+from storage import local_path, oss_url, publish, published_marker_exists, setting, verify_published
 
 
 DATASETS = {
@@ -19,23 +19,6 @@ DATASETS = {
     "corpus": "Tevatron/browsecomp-plus-corpus",
     "indexes": "Tevatron/browsecomp-plus-indexes",
 }
-
-
-def verify_published(run, prefix):
-    workspace = run / "transfer" / "verify-data"
-    workspace.mkdir(parents=True, exist_ok=True)
-    manifest = workspace / "manifest.json"
-    marker = workspace / "_SUCCESS"
-    copy_file(f"{prefix}/manifest.json", manifest, workspace)
-    copy_file(f"{prefix}/_SUCCESS", marker, workspace)
-    if marker.read_text(encoding="utf-8").strip() != file_sha(manifest):
-        raise ValueError("OSS completion marker does not match the uploaded manifest")
-    published = json.loads(manifest.read_text(encoding="utf-8"))
-    local_files = collect_files(run / "data")
-    if published.get("kind") != "data" or published.get("files") != local_files:
-        raise ValueError("OSS file manifest differs from the local downloaded datasets")
-    for name, entry in local_files.items():
-        verify_size(f"{prefix}/files/{name}", entry["size"])
 
 
 def main():
@@ -63,7 +46,7 @@ def main():
     if args.verify_only:
         if not sources_file.is_file():
             raise ValueError(f"saved source revisions are missing: {sources_file}")
-        verify_published(run, prefix)
+        verify_published(run, "data")
         print(f"VERIFIED {prefix}/_SUCCESS", flush=True)
         if not args.keep_scratch:
             shutil.rmtree(run)
@@ -100,10 +83,9 @@ def main():
                    for path in directory.rglob("*")):
             raise ValueError(f"no dataset files downloaded in {directory}")
     # storage.publish verifies every uploaded size and writes manifest.json then _SUCCESS.
-    remote_status = ossutil("stat", f"{prefix}/_SUCCESS", capture=True, check=False)
-    if remote_status.returncode:
+    if not published_marker_exists(prefix):
         publish(run, "data")
-    verify_published(run, prefix)
+    verify_published(run, "data")
     print(f"VERIFIED {prefix}/_SUCCESS", flush=True)
     if not args.keep_scratch:
         shutil.rmtree(run)

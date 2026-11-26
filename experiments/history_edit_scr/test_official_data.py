@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import official_data
+import storage
 from storage import collect_files, file_sha
 
 
@@ -29,15 +29,16 @@ class PublishedDataTest(unittest.TestCase):
             def download(source, destination, _workspace):
                 shutil.copyfile(remote / source.rsplit("/", 1)[-1], destination)
 
-            with patch.object(official_data, "copy_file", side_effect=download), \
-                 patch.object(official_data, "verify_size") as verify_size:
-                official_data.verify_published(run, "oss://test/data/bcp-data-test")
-                verify_size.assert_called_once_with(
+            with patch.dict("os.environ", {"CLM_OSS_PREFIX": "oss://test"}), \
+                 patch.object(storage, "copy_file", side_effect=download), \
+                 patch.object(storage, "verify_size") as verify_size:
+                storage.verify_published(run, "data")
+                verify_size.assert_any_call(
                     "oss://test/data/bcp-data-test/files/queries/sample.parquet", 7
                 )
                 marker.write_text("invalid\n")
                 with self.assertRaisesRegex(ValueError, "completion marker"):
-                    official_data.verify_published(run, "oss://test/data/bcp-data-test")
+                    storage.verify_published(run, "data")
 
 
 if __name__ == "__main__":

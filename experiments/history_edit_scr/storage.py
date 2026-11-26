@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage pinned weights and publish selected CLM artifacts with ossutil."""
+"""Stage CLM artifacts and publish, verify, or release them with ossutil."""
 
 import argparse
 import hashlib
@@ -109,13 +109,19 @@ def oss_url(suffix):
     return f"{setting('CLM_OSS_PREFIX').rstrip('/')}/{suffix}"
 
 
-def confirm_unpublished(prefix):
+def published_marker_exists(prefix):
     result = ossutil("stat", f"{prefix}/{SUCCESS}", capture=True, check=False)
     if result.returncode == 0:
-        raise ValueError(f"already published: {prefix}")
+        return True
     error = (result.stdout + result.stderr).decode(errors="replace")
-    if not re.search(r"\b(?:NoSuchKey|404)\b", error, re.IGNORECASE):
-        raise ValueError(f"could not check {prefix}/{SUCCESS}: {error.strip()}")
+    if re.search(r"\b(?:NoSuchKey|404)\b", error, re.IGNORECASE):
+        return False
+    raise ValueError(f"could not check {prefix}/{SUCCESS}: {error.strip()}")
+
+
+def confirm_unpublished(prefix):
+    if published_marker_exists(prefix):
+        raise ValueError(f"already published: {prefix}")
 
 
 def copy_file(source, destination, checkpoints):
@@ -129,16 +135,21 @@ def verify_size(url, size):
         raise ValueError(f"OSS object size verification failed: {url} (expected {size} bytes)")
 
 
-def publish(run, kind, subdir=None):
+def artifact_paths(run, kind, subdir=None):
     if subdir and kind != "eval":
         raise ValueError("--subdir is supported only for publish-eval")
     root = run / kind / subdir if subdir else run / kind
     if kind == "model":
         root = model_ready(root / REVISION)
     prefix = oss_url(MODEL_PREFIX if kind == "model" else f"{kind}/{run.name}" + (f"/{subdir}" if subdir else ""))
+    workspace = run / "transfer" / (f"publish-{kind}" + (f"-{subdir}" if subdir else ""))
+    return root, prefix, workspace
+
+
+def publish(run, kind, subdir=None):
+    root, prefix, workspace = artifact_paths(run, kind, subdir)
     confirm_unpublished(prefix)
     files = collect_files(root)
-    workspace = run / "transfer" / (f"publish-{kind}" + (f"-{subdir}" if subdir else ""))
     workspace.mkdir(parents=True, exist_ok=True)
     manifest = workspace / MANIFEST
     marker = workspace / SUCCESS
@@ -162,12 +173,10 @@ def publish(run, kind, subdir=None):
     print(f"{prefix}/{SUCCESS}")
 
 
-def verify_published_eval(run, subdir):
-    """Check the remote completion marker, manifest, and every published file size."""
-    root = run / "eval" / subdir
+def verify_published(run, kind, subdir=None):
+    """Compare local content with the remote marker, manifest, and file sizes."""
+    root, prefix, workspace = artifact_paths(run, kind, subdir)
     files = collect_files(root)
-    prefix = oss_url(f"eval/{run.name}/{subdir}")
-    workspace = run / "transfer" / f"publish-eval-{subdir}"
     workspace.mkdir(parents=True, exist_ok=True)
     remote_manifest = workspace / "verified-manifest.json"
     remote_marker = workspace / "verified-_SUCCESS"
@@ -176,8 +185,9 @@ def verify_published_eval(run, subdir):
     if remote_marker.read_text(encoding="utf-8").strip() != file_sha(remote_manifest):
         raise ValueError(f"OSS completion marker does not match the manifest: {prefix}")
     manifest = json.loads(remote_manifest.read_text(encoding="utf-8"))
-    if manifest.get("kind") != "eval" or manifest.get("files") != files:
-        raise ValueError(f"OSS eval manifest differs from the local result: {prefix}")
+    if (manifest.get("kind") != kind or manifest.get("files") != files
+            or (kind == "model" and manifest.get("model_revision") != REVISION)):
+        raise ValueError(f"OSS manifest differs from the local {kind} artifact: {prefix}")
     verify_size(f"{prefix}/{MANIFEST}", remote_manifest.stat().st_size)
     verify_size(f"{prefix}/{SUCCESS}", remote_marker.stat().st_size)
     for name, entry in files.items():
@@ -185,23 +195,25 @@ def verify_published_eval(run, subdir):
     return prefix, workspace
 
 
-def publish_eval_and_cleanup(run, subdir):
-    """Publish one eval directory, verify OSS, then remove only that local eval copy."""
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", subdir):
+def publish_and_cleanup(run, kind, subdir=None):
+    """Publish a finished artifact, verify OSS, then remove its local copy."""
+    if kind not in {"eval", "ckpt", "model"} or (kind == "eval" and not subdir):
+        raise ValueError("cleanup requires one eval subdirectory, checkpoint, or model artifact")
+    if subdir and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", subdir):
         raise ValueError(f"invalid eval subdirectory: {subdir!r}")
-    root = run / "eval" / subdir
-    if (run / "eval").is_symlink() or (run / "transfer").is_symlink() or root.is_symlink() or not root.is_dir():
-        raise ValueError(f"expected a local eval directory: {root}")
-    prefix = oss_url(f"eval/{run.name}/{subdir}")
-    try:
-        publish(run, "eval", subdir)
-    except ValueError as exc:
-        if str(exc) != f"already published: {prefix}":
-            raise
-    verified_prefix, workspace = verify_published_eval(run, subdir)
+    root, prefix, workspace = artifact_paths(run, kind, subdir)
+    if (run / kind).is_symlink() or (run / "transfer").is_symlink() or root.is_symlink() or not root.is_dir():
+        raise ValueError(f"expected a local {kind} directory: {root}")
+    if not published_marker_exists(prefix):
+        publish(run, kind, subdir)
+    verified_prefix, workspace = verify_published(run, kind, subdir)
     shutil.rmtree(workspace)
     shutil.rmtree(root)
-    print(f"verified on OSS and removed local eval copy: {verified_prefix}")
+    if kind == "model":
+        stage_workspace = run / "transfer" / "stage-model"
+        if stage_workspace.is_dir() and not stage_workspace.is_symlink():
+            shutil.rmtree(stage_workspace)
+    print(f"verified on OSS and removed local {kind} copy: {verified_prefix}")
 
 
 def stage_model(run):
@@ -250,14 +262,15 @@ def main():
     parser.add_argument("action", choices=("run-dir", "model-dir", "stage-model", "publish-model", "publish-eval", "publish-ckpt"))
     parser.add_argument("run_id")
     parser.add_argument("--subdir", help="publish one eval subdirectory to its own OSS prefix")
-    parser.add_argument("--cleanup", action="store_true", help="verify published eval files, then remove that local eval subdirectory")
+    parser.add_argument("--cleanup", action="store_true", help="verify published files, then remove that local eval, ckpt, or model artifact")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.run_id):
         parser.error("run ID must be one directory name")
     if args.subdir and (args.action != "publish-eval" or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", args.subdir)):
         parser.error("--subdir requires publish-eval and a single safe directory name")
-    if args.cleanup and (args.action != "publish-eval" or not args.subdir):
-        parser.error("--cleanup requires publish-eval --subdir NAME")
+    if args.cleanup and (args.action not in {"publish-eval", "publish-ckpt", "publish-model"}
+                         or (args.action == "publish-eval" and not args.subdir)):
+        parser.error("--cleanup requires publish-eval --subdir NAME, publish-ckpt, or publish-model")
     run = local_path(Path(setting("CLM_SCRATCH_ROOT")) / args.run_id)
     if args.action == "run-dir":
         print(run)
@@ -266,7 +279,7 @@ def main():
     elif args.action == "stage-model":
         print(stage_model(run))
     elif args.cleanup:
-        publish_eval_and_cleanup(run, args.subdir)
+        publish_and_cleanup(run, args.action.removeprefix("publish-"), args.subdir)
     else:
         publish(run, args.action.removeprefix("publish-"), args.subdir)
 

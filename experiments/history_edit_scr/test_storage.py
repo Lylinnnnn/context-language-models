@@ -17,6 +17,7 @@ class StorageTests(unittest.TestCase):
         self.run = Path(temporary.name) / "run-test"
         self.objects = {}
         self.bad_size = False
+        self.stat_error = False
         mocked = patch.object(storage, "ossutil", side_effect=self.ossutil)
         mocked.start()
         self.addCleanup(mocked.stop)
@@ -29,6 +30,8 @@ class StorageTests(unittest.TestCase):
             else:
                 self.objects[target] = Path(source).read_bytes()
             return
+        if self.stat_error:
+            return subprocess.CompletedProcess([], 1, b"", b"AccessDenied")
         if source not in self.objects:
             return subprocess.CompletedProcess([], 1, b"", b"Error Code: NoSuchKey")
         size = len(self.objects[source]) + self.bad_size
@@ -73,6 +76,9 @@ class StorageTests(unittest.TestCase):
         self.assertEqual(storage.stage_model(new_run), target)
         self.assertEqual((target / "weights.safetensors").read_bytes(), b"weight")
         self.assertFalse((target / ".gitattributes").exists())
+        storage.publish_and_cleanup(self.run, "model")
+        self.assertFalse(source.exists())
+        self.assertTrue(target.exists())
 
     def test_eval_subdir_has_independent_completion_marker(self):
         root = self.run / "eval"
@@ -95,12 +101,12 @@ class StorageTests(unittest.TestCase):
 
         self.bad_size = True
         with self.assertRaisesRegex(ValueError, "size verification failed"):
-            storage.publish_eval_and_cleanup(self.run, "full-s42")
+            storage.publish_and_cleanup(self.run, "eval", "full-s42")
         self.assertTrue(root.exists())
         self.assertNotIn(f"{prefix}/_SUCCESS", self.objects)
 
         self.bad_size = False
-        storage.publish_eval_and_cleanup(self.run, "full-s42")
+        storage.publish_and_cleanup(self.run, "eval", "full-s42")
         self.assertFalse(root.exists())
         self.assertFalse((self.run / "transfer" / "publish-eval-full-s42").exists())
         self.assertIn(f"{prefix}/_SUCCESS", self.objects)
@@ -113,10 +119,10 @@ class StorageTests(unittest.TestCase):
         storage.publish(self.run, "eval", "full-s42")
         result.write_text('{"completed": 31}')
         with self.assertRaisesRegex(ValueError, "manifest differs"):
-            storage.publish_eval_and_cleanup(self.run, "full-s42")
+            storage.publish_and_cleanup(self.run, "eval", "full-s42")
         self.assertTrue(root.exists())
         result.write_text('{"completed": 32}')
-        storage.publish_eval_and_cleanup(self.run, "full-s42")
+        storage.publish_and_cleanup(self.run, "eval", "full-s42")
         self.assertFalse(root.exists())
 
     def test_eval_cleanup_rejects_invalid_remote_completion_marker(self):
@@ -127,7 +133,27 @@ class StorageTests(unittest.TestCase):
         prefix = storage.oss_url(f"eval/{self.run.name}/full-s42")
         self.objects[f"{prefix}/_SUCCESS"] = b"0" * 64 + b"\n"
         with self.assertRaisesRegex(ValueError, "completion marker does not match"):
-            storage.publish_eval_and_cleanup(self.run, "full-s42")
+            storage.publish_and_cleanup(self.run, "eval", "full-s42")
+        self.assertTrue(root.exists())
+
+    def test_checkpoint_cleanup_keeps_other_run_artifacts(self):
+        checkpoint = self.run / "ckpt"
+        checkpoint.mkdir(parents=True)
+        (checkpoint / "optimizer.bin").write_bytes(b"training state")
+        model = self.run / "model"
+        model.mkdir()
+        (model / "unrelated.txt").write_text("keep")
+        storage.publish_and_cleanup(self.run, "ckpt")
+        self.assertFalse(checkpoint.exists())
+        self.assertTrue((model / "unrelated.txt").exists())
+
+    def test_oss_permission_error_keeps_local_artifact(self):
+        root = self.run / "eval" / "full-s42"
+        root.mkdir(parents=True)
+        (root / "summary.json").write_text("{}")
+        self.stat_error = True
+        with self.assertRaisesRegex(ValueError, "AccessDenied"):
+            storage.publish_and_cleanup(self.run, "eval", "full-s42")
         self.assertTrue(root.exists())
 
 

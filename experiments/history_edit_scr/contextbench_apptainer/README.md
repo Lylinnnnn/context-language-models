@@ -36,7 +36,7 @@ bash "$E/contextbench_apptainer/pilot.sh" "$RUN_ID"
 
 `full_seed42.py` 使用冻结的 ContextBench checkout 里全部 **seed 42** 任务：KV Store 8 个级别、Log Triage 7 个、Needle Retention 10 个、Sudoku Sketchpad 7 个，共 32 题。官方完整集合为 8 个 seed、256 题；这里是节省算力的单 seed 子集。脚本按原始 `environment/stream/chunks.jsonl` 文件大小分配 8 个 shard，每张卡 4 题。每张卡只启动一个 vLLM 服务，依次执行自己的 4 题。四类仍用原版 `task.toml`、任务流和 verifier，不修改官方任务。
 
-在仓库根目录执行；复用已有的 Conda 环境、模型和 Apptainer 镜像：
+在仓库根目录执行；复用已有的 Conda 环境和 Apptainer 镜像。若之前的本机模型还在，就让八个 shard 共用它；否则入口从 OSS 暂存一份到本次 `$RUN_ID/model/`，本批任务结束后自动核验并清理该份暂存：
 
 ```bash
 conda activate clm
@@ -44,10 +44,11 @@ E=experiments/history_edit_scr
 source "$E/vllm_fallback/modelscope.env"
 MODEL_RUN_ID=vllm-20261125-153822
 CLM_MODEL_DIR=$(python "$E/storage.py" model-dir "$MODEL_RUN_ID")
-if [ ! -f "$CLM_MODEL_DIR/model.safetensors.index.json" ]; then
-  CLM_MODEL_DIR=$(python "$E/storage.py" stage-model "$MODEL_RUN_ID")
+if [ -f "$CLM_MODEL_DIR/model.safetensors.index.json" ]; then
+  export CLM_MODEL_DIR
+else
+  unset CLM_MODEL_DIR
 fi
-export CLM_MODEL_DIR
 RUN_ID="cb-full-s42-$(date -u +%Y%m%dT%H%M%SZ)"
 python "$E/contextbench_apptainer/full_seed42.py" "$RUN_ID" --gpus 0,1,2,3,4,5,6,7
 ```
@@ -58,7 +59,7 @@ python "$E/contextbench_apptainer/full_seed42.py" "$RUN_ID" --gpus 0,1,2,3,4,5,6
 python "$E/contextbench_apptainer/full_seed42.py" "$RUN_ID" --gpus 0,1,2,3,4,5,6,7 --resume
 ```
 
-32/32 完成后脚本自动把该评测子目录归档到 OSS，重新下载远端 manifest 和 `_SUCCESS`、核对本机逐文件 SHA-256 清单与远端逐文件大小；全部通过才删除该 run 下的 `eval/contextbench-s42-vllm-off`、上传中转文件及这次八张卡的 FlashInfer 临时编译缓存。模型、Conda 环境、其他评测目录保持可用。可用下面的只读命令核对完成标记：
+32/32 完成后脚本自动把该评测子目录归档到 OSS，重新下载远端 manifest 和 `_SUCCESS`、核对本机逐文件 SHA-256 清单与远端逐文件大小；全部通过才删除该 run 下的 `eval/contextbench-s42-vllm-off`、上传中转文件及这次八张卡的 FlashInfer 临时编译缓存。若模型由此入口暂存到本次 run，它也会核验 OSS 原权重并删除本次模型暂存。Conda 环境和其他评测目录保持可用。可用下面的只读命令核对完成标记：
 
 ```bash
 ossutil stat "oss://industry-algo/yanlin/clm/eval/$RUN_ID/contextbench-s42-vllm-off/_SUCCESS"
@@ -69,5 +70,7 @@ ossutil stat "oss://industry-algo/yanlin/clm/eval/$RUN_ID/contextbench-s42-vllm-
 ```bash
 python "$E/storage.py" publish-eval "$RUN_ID" --subdir contextbench-s42-vllm-off --cleanup
 ```
+
+若沿用 `CLM_MODEL_DIR=/tmp/clm/<MODEL_RUN_ID>/model/modelscope-master-v1` 的共享本机模型，脚本不会在单次 ContextBench 结束时删除它，以免影响随后使用该模型的任务。**所有**依赖该共享暂存的任务都结束后，执行一次 `python "$E/storage.py" publish-model "$MODEL_RUN_ID" --cleanup`，核验 OSS 原权重再释放本机副本。
 
 这组保持单题试跑验证过的 vLLM 0.19.1、Qwen3.6-27B、`ClmStream` 和 SCR **off** 配置；论文中 SGLang 后端和 8 seed 统计不能用这组结果代替。若要做 SCR on 对照，在另一轮使用新的 `RUN_ID` 和 `--mode on`，同一份 seed 42 任务会按相同 shard 规则运行，输出目录是 `contextbench-s42-vllm-on`。

@@ -42,6 +42,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_id", help="new bcp-data-... directory below CLM_SCRATCH_ROOT")
     parser.add_argument("--endpoint", default=os.environ.get("HF_ENDPOINT", "https://hf-mirror.com"))
+    parser.add_argument("--verify-only", action="store_true", help="verify an existing OSS archive against scratch without network downloads")
     parser.add_argument("--keep-scratch", action="store_true")
     args = parser.parse_args()
     if not re.fullmatch(r"bcp-data-[A-Za-z0-9._-]+", args.run_id):
@@ -54,8 +55,20 @@ def main():
         if not marker_file.is_file() or marker_file.read_text() != "bcp-data\n":
             parser.error(f"scratch directory was not created by this downloader: {run}")
     else:
+        if args.verify_only:
+            parser.error(f"scratch directory is absent: {run}")
         run.mkdir(parents=True)
         marker_file.write_text("bcp-data\n")
+    prefix = oss_url(f"data/{args.run_id}")
+    if args.verify_only:
+        if not sources_file.is_file():
+            raise ValueError(f"saved source revisions are missing: {sources_file}")
+        verify_published(run, prefix)
+        print(f"VERIFIED {prefix}/_SUCCESS", flush=True)
+        if not args.keep_scratch:
+            shutil.rmtree(run)
+            print(f"REMOVED SCRATCH {run}", flush=True)
+        return
     os.environ["HF_ENDPOINT"] = args.endpoint
     os.environ["HF_HOME"] = str(run / "hf-cache")
     from huggingface_hub import HfApi, snapshot_download
@@ -87,7 +100,6 @@ def main():
                    for path in directory.rglob("*")):
             raise ValueError(f"no dataset files downloaded in {directory}")
     # storage.publish verifies every uploaded size and writes manifest.json then _SUCCESS.
-    prefix = oss_url(f"data/{args.run_id}")
     remote_status = ossutil("stat", f"{prefix}/_SUCCESS", capture=True, check=False)
     if remote_status.returncode:
         publish(run, "data")

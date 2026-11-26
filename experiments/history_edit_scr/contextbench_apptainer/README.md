@@ -31,3 +31,38 @@ bash "$E/contextbench_apptainer/pilot.sh" "$RUN_ID"
 `pilot.sh` 自动启动 off 服务，等 `/v1/models` 就绪后只跑一题，并在退出时停止自己启动的服务。日志在 `/tmp/clm/<RUN_ID>/eval/contextbench-kv-s42-vllm-off/off/`；Harbor trial 与评分在其 `trials/` 子目录。成功检查评分和轨迹之后，可用 `python "$E/storage.py" publish-eval "$RUN_ID" --subdir contextbench-kv-s42-vllm-off` 独立归档到 OSS。若构建镜像时 `/proc` 警告但命令成功，可继续；若 trial 报错，先查看 `server.log` 和 trial 日志的首个异常。
 
 每次重试使用新的 `RUN_ID`，保留上次的 `server.log` 与失败现场。入口在启动 GPU 服务前检查当前 Harbor CLI 是否支持所需的 `--environment-kwarg`。
+
+## 原版四类任务：单 seed 八卡
+
+`full_seed42.py` 使用冻结的 ContextBench checkout 里全部 **seed 42** 任务：KV Store 8 个级别、Log Triage 7 个、Needle Retention 10 个、Sudoku Sketchpad 7 个，共 32 题。官方完整集合为 8 个 seed、256 题；这里是节省算力的单 seed 子集。脚本按原始 `environment/stream/chunks.jsonl` 文件大小分配 8 个 shard，每张卡 4 题。每张卡只启动一个 vLLM 服务，依次执行自己的 4 题。四类仍用原版 `task.toml`、任务流和 verifier，不修改官方任务。
+
+在仓库根目录执行；复用已有的 Conda 环境、模型和 Apptainer 镜像：
+
+```bash
+conda activate clm
+E=experiments/history_edit_scr
+source "$E/vllm_fallback/modelscope.env"
+MODEL_RUN_ID=vllm-20261125-153822
+CLM_MODEL_DIR=$(python "$E/storage.py" model-dir "$MODEL_RUN_ID")
+if [ ! -f "$CLM_MODEL_DIR/model.safetensors.index.json" ]; then
+  CLM_MODEL_DIR=$(python "$E/storage.py" stage-model "$MODEL_RUN_ID")
+fi
+export CLM_MODEL_DIR
+RUN_ID="cb-full-s42-$(date -u +%Y%m%dT%H%M%SZ)"
+python "$E/contextbench_apptainer/full_seed42.py" "$RUN_ID" --gpus 0,1,2,3,4,5,6,7
+```
+
+运行中每题的 Harbor 输出在 `/tmp/clm/<RUN_ID>/eval/contextbench-s42-vllm-off/logs/`，原版 trial、评分和轨迹在 `trials/`，服务日志在 `servers/`。`manifest.json` 记录固定任务和 shard，`summary.json` 汇总完成数与平均 reward；脚本只有 32/32 题都有正式评分才返回 0。中途失败后先修复原因，再以**同一个** `RUN_ID` 加 `--resume`，已通过的题会从保存的 `result.json` 重新核验并跳过：
+
+```bash
+python "$E/contextbench_apptainer/full_seed42.py" "$RUN_ID" --gpus 0,1,2,3,4,5,6,7 --resume
+```
+
+32/32 完成后再归档评测结果：
+
+```bash
+python "$E/storage.py" publish-eval "$RUN_ID" --subdir contextbench-s42-vllm-off
+ossutil stat "oss://industry-algo/yanlin/clm/eval/$RUN_ID/contextbench-s42-vllm-off/_SUCCESS"
+```
+
+这组保持单题试跑验证过的 vLLM 0.19.1、Qwen3.6-27B、`ClmStream` 和 SCR **off** 配置；论文中 SGLang 后端和 8 seed 统计不能用这组结果代替。若要做 SCR on 对照，在另一轮使用新的 `RUN_ID` 和 `--mode on`，同一份 seed 42 任务会按相同 shard 规则运行，输出目录是 `contextbench-s42-vllm-on`。

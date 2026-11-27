@@ -7,3 +7,5 @@ clm_icl_runs/
 results/
 .env
 tools/
+.DS_Store
+/tmp_result/

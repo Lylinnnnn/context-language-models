@@ -105,6 +105,15 @@ python -u "$E/contextbench_apptainer/full_seed42.py" "$RUN_ID" \
 ossutil cat "oss://industry-algo/yanlin/clm/eval/$RUN_ID/contextbench-s42-vllm-off-no-edit/files/summary.json"
 ```
 
+两组都归档后，生成一份逐题对齐的 Markdown 指标报告。报告在本地 `tmp_result/` 保留，并上传到无编辑运行原目录的 `files/comparison.md`；上传后读回核对 SHA-256，写 `files/comparison.md._SUCCESS`，不覆盖原归档清单：
+
+```bash
+EDIT_RUN_ID=cb-full-s42-20261126T122915Z
+NO_EDIT_RUN_ID=cb-noedit-s42-20261127T092014Z
+python -u "$E/contextbench_apptainer/compare_runs.py" "$EDIT_RUN_ID" "$NO_EDIT_RUN_ID"
+cat "tmp_result/$NO_EDIT_RUN_ID-vs-$EDIT_RUN_ID.md"
+```
+
 ## 已归档结果的编辑与案例审计
 
 完整评测成功归档后，运行以下命令。它从 OSS 读取每题较小的 `usage.json`、`timing.json`，把未满分或任务流未结束的题列为 bad case，并从每类挑一题完整满分的 good case。仅对选中的题读取完整 `trajectory.ctx.json`，不拉取模型权重、数据集或全部逐轮快照，也不启动 GPU 服务。

@@ -236,16 +236,16 @@ def report_markdown(run_id, mode, rows, cases):
     return "\n".join(lines)
 
 
-def publish(local, files, temporary):
-    url = f"{files}/analysis.md"
-    marker = f"{files}/analysis.md._SUCCESS"
+def publish(local, files, temporary, name="analysis.md"):
+    url = f"{files}/{name}"
+    marker = f"{files}/{name}._SUCCESS"
     run("ossutil", "cp", str(local), url, "-f")
     copy = temporary / "verified-analysis.md"
     run("ossutil", "cp", url, str(copy), "-f")
     digest = sha256(local)
     if sha256(copy) != digest:
         raise RuntimeError(f"OSS readback differs from local analysis: {url}")
-    mark = temporary / "analysis.md._SUCCESS"
+    mark = temporary / f"{name}._SUCCESS"
     mark.write_text(digest + "\n", encoding="ascii")
     run("ossutil", "cp", str(mark), marker, "-f")
     checked = temporary / "verified-marker"

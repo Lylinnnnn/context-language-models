@@ -109,6 +109,7 @@ before Harbor starts).
 | `lm_call_cap` | `2*max_steps+24` | Cap on the main agent's LM calls. Free context-editing turns still count here. `0` disables it. |
 | `finalize_nudge_turns`, `finalize_message` | 3, none | In the last N turns, a notice tells the model to write its final output and submit. The count uses whichever runs out first, task steps or LM calls under the cap (`finalize_on_lm_call_cap`, default on). `finalize_message` is appended to the notice. |
 | `allow_edit_growth` / `CLM_EDIT_GATE` | fit | Edit gate. `fit` accepts an edit if the result fits the limit. `shrink` accepts it only if the context gets smaller. Both take `fit` or `shrink`; the kwarg also takes `true` (fit) or `false` (shrink). A rejected edit is not applied, and the model is told why. The kwarg overrides the env var. |
+| `enable_context_editing` | true | Set to `false` for a no-edit baseline: use a history read-only prompt and skip mirror upload, readback, and edit application. Task file edits through `bash` still work. |
 | `finish_policy` | `submit` | `submit`: the model ends the run with `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT`. `open_ended`: there is no finish command. |
 | `task_template` | `terminal_agent_tasks` | How the task is presented: `terminal_agent_tasks`, `open_problems` (the instruction as is), or `edgebench`. |
 | `temperature`, `top_p`, `max_tokens` | 0.7, 0.95, 16384 | Sampling. Pass `none` to omit `temperature` or `top_p`. |

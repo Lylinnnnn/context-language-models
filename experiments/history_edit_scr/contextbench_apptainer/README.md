@@ -75,6 +75,36 @@ python "$E/storage.py" publish-eval "$RUN_ID" --subdir contextbench-s42-vllm-off
 
 这组保持单题试跑验证过的 vLLM 0.19.1、Qwen3.6-27B、`ClmStream` 和 SCR **off** 配置；论文 ContextBench 主图使用 GPT-5.4，每个难度运行四个 seed，部分难度运行八个 seed。这组单 seed、不同模型的结果不能直接当作主图的数值复现。若要做 SCR on 对照，在另一轮使用新的 `RUN_ID` 和 `--mode on`，同一份 seed 42 任务会按相同 shard 规则运行，输出目录是 `contextbench-s42-vllm-on`。
 
+## 不编辑历史的对照
+
+`SCR off` 仍允许 CLM 自编辑。`--agent no-edit` 使用同一模型、任务、seed、预算、vLLM SCR off 和八卡分片，移除 CLM 编辑方法说明，改用无历史编辑提示，并在执行层跳过历史镜像读写。每题结束时要求 `usage.json` 的 `n_ctx_syncs=0`，避免把只改提示的试验误记作无编辑。历史不能压缩，长任务可能先到上下文预算墙；比较时同时看 reward、送达操作数和结束原因。此对照同时改变编辑能力与编辑提示，估计的是整套 CLM 方法相对不编辑方法的差异，不是仅由历史文本编辑造成的因果效应。单 seed 与模型替换的局限同上。
+
+先用一题试跑。它在评分与零编辑校验通过后归档到 OSS 并清理本次本机评测目录：
+
+```bash
+conda activate clm
+E=experiments/history_edit_scr
+source "$E/vllm_fallback/modelscope.env"
+MODEL_RUN_ID=vllm-20261125-153822
+CLM_MODEL_DIR=$(python "$E/storage.py" model-dir "$MODEL_RUN_ID")
+if [ ! -f "$CLM_MODEL_DIR/model.safetensors.index.json" ]; then
+  CLM_MODEL_DIR=$(python "$E/storage.py" stage-model "$MODEL_RUN_ID")
+fi
+export CLM_MODEL_DIR
+SMOKE_RUN_ID="cb-noedit-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
+CUDA_VISIBLE_DEVICES=0 bash "$E/contextbench_apptainer/pilot.sh" "$SMOKE_RUN_ID" --no-edit
+ossutil stat "oss://industry-algo/yanlin/clm/eval/$SMOKE_RUN_ID/contextbench-kv-s42-vllm-off-no-edit/_SUCCESS"
+```
+
+随后跑 32 题，完成后自动核验上传并清理本次本机评测目录；失败时用同一个 `RUN_ID` 加 `--resume`：
+
+```bash
+RUN_ID="cb-noedit-s42-$(date -u +%Y%m%dT%H%M%SZ)"
+python -u "$E/contextbench_apptainer/full_seed42.py" "$RUN_ID" \
+  --agent no-edit --mode off --gpus 0,1,2,3,4,5,6,7
+ossutil cat "oss://industry-algo/yanlin/clm/eval/$RUN_ID/contextbench-s42-vllm-off-no-edit/files/summary.json"
+```
+
 ## 已归档结果的编辑与案例审计
 
 完整评测成功归档后，运行以下命令。它从 OSS 读取每题较小的 `usage.json`、`timing.json`，把未满分或任务流未结束的题列为 bad case，并从每类挑一题完整满分的 good case。仅对选中的题读取完整 `trajectory.ctx.json`，不拉取模型权重、数据集或全部逐轮快照，也不启动 GPU 服务。

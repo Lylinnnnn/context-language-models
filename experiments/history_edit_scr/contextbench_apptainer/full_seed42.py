@@ -64,9 +64,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run_id")
     parser.add_argument("--mode", choices=("off", "on"), default="off")
+    parser.add_argument("--agent", choices=("clm", "no-edit"), default="clm")
     parser.add_argument("--gpus", default="0,1,2,3,4,5,6,7")
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
+    if args.agent == "no-edit" and args.mode != "off":
+        parser.error("no-edit baseline uses SCR off; pass --mode off")
     gpus = [int(value) for value in args.gpus.split(",")]
     if len(gpus) != 8 or len(set(gpus)) != 8 or min(gpus) < 0:
         parser.error("--gpus must list eight distinct nonnegative GPU indices")
@@ -90,7 +93,10 @@ def main():
     shards, sizes = tasks_and_shards(cb_repo)
     run = Path(subprocess.check_output(
         [sys.executable, str(EXPERIMENT / "storage.py"), "run-dir", args.run_id], text=True).strip())
-    root = run / "eval" / f"contextbench-s42-vllm-{args.mode}"
+    eval_name = f"contextbench-s42-vllm-{args.mode}"
+    if args.agent == "no-edit":
+        eval_name += "-no-edit"
+    root = run / "eval" / eval_name
     manifest_path = root / "manifest.json"
     if manifest_path.exists() and not args.resume:
         parser.error(f"Output already exists: {root}; use --resume")
@@ -117,6 +123,8 @@ def main():
                 "clm_commit": git_head(REPO), "model_dir": str(model.resolve()),
                 "model_revision": os.environ.get("CLM_MODEL_REVISION", ""),
                 "max_model_len": 40960, "tool_call_parser": "qwen3_coder"}
+    if args.agent == "no-edit":
+        manifest["agent"] = "no-edit"
     if manifest_path.exists():
         previous = json.loads(manifest_path.read_text())
         same_except_commit = all(previous.get(key) == value for key, value in manifest.items()

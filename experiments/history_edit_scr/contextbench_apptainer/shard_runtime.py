@@ -133,6 +133,9 @@ def worker(shard_id, gpu, names, args, root, cb_repo, image_cache, apptainer_hom
                 "--agent-kwarg", f"api_base=http://127.0.0.1:{port}/v1",
                 "--trial-name", trial_name, "--trials-dir", str(trial_dir),
             ]
+            if args.agent == "no-edit":
+                command.extend(("--agent-kwarg", "enable_context_editing=false",
+                                "--agent-kwarg", "skill=none"))
             print(f"[GPU {gpu}] start {name}", flush=True)
             with output.open("w", encoding="utf-8") as log_file:
                 completed = subprocess.run(command, env=env, stdout=log_file, stderr=subprocess.STDOUT)
@@ -140,6 +143,10 @@ def worker(shard_id, gpu, names, args, root, cb_repo, image_cache, apptainer_hom
                 if completed.returncode:
                     raise RuntimeError(f"Harbor exit {completed.returncode}; see {output}")
                 rewards = load_result(result_path)
+                if args.agent == "no-edit":
+                    usage = json.loads((result_path.parent / "agent/usage.json").read_text())
+                    if usage["n_ctx_syncs"] != 0:
+                        raise RuntimeError(f"No-edit baseline applied {usage['n_ctx_syncs']} context edits")
                 status = {"ok": True, "task": name, "gpu": gpu, "reward": rewards["reward"],
                           "rewards": rewards, "result": str(result_path.relative_to(root)),
                           "log": str(output.relative_to(root))}

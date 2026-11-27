@@ -55,6 +55,7 @@ class ContextEnv:
         obs_cfg: dict[str, Any] | None = None,
         allow_edit_growth: bool = True,
         context_budget_tokens: int = 0,
+        enable_context_editing: bool = True,
     ) -> None:
         self.paths = paths
         self.budget = budget
@@ -65,6 +66,7 @@ class ContextEnv:
         self.obs_cfg = obs_cfg or dict(_DEFAULT_OBS)
         self.allow_edit_growth = allow_edit_growth
         self.context_budget_tokens = int(context_budget_tokens or 0)
+        self.enable_context_editing = enable_context_editing
         fd, tmp = tempfile.mkstemp(prefix="live_ctx_mirror_", suffix=".txt")
         os.close(fd)
         self.host_mirror = Path(tmp)
@@ -188,17 +190,18 @@ class ContextEnv:
         pending: dict[str, Any] | None = None,
     ) -> StepResult:
         p = self.paths
-        rendered = await self.write_mirror(environment, messages)
+        rendered = await self.write_mirror(environment, messages) if self.enable_context_editing else ""
         self.turns_since_edit += 1
 
         t1 = time.monotonic()
         result = await self.execute(command, environment)
         exec_time = time.monotonic() - t1
 
-        touched_ctx = ("LIVE_CTX_MAIN" in command) or (
-            p.ctx_dir in command and not any(s in command for s in _NOT_AN_EDIT)
+        touched_ctx = self.enable_context_editing and (
+            "LIVE_CTX_MAIN" in command or
+            (p.ctx_dir in command and not any(s in command for s in _NOT_AN_EDIT))
         )
-        read_back = await self.read_mirror(environment)
+        read_back = await self.read_mirror(environment) if self.enable_context_editing else None
         before = tk.count_tokens(messages)[0]
         limit = self.budget.strict_target or self.context_budget_tokens or 0
         edit_rec: dict[str, Any] = {

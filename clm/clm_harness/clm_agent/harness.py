@@ -75,6 +75,7 @@ _PROMPTS_PATH = Path(__file__).resolve().parent / "prompts.yaml"
 with _PROMPTS_PATH.open(encoding="utf-8") as _fh:
     _PROMPTS: dict[str, Any] = yaml.safe_load(_fh)
 _SYSTEM_TEMPLATE: str = _PROMPTS["system_template"]
+_SYSTEM_NO_EDIT_TEMPLATE: str = _PROMPTS["system_template_no_edit"]
 _OBS_CFG: dict[str, Any] = _PROMPTS["observation"]
 
 _ABORT_EXCEPTIONS = (
@@ -238,6 +239,7 @@ class ClmAgent(BaseAgent):
         # way a rejected edit is not applied and the model gets a note it can act on.
         # None = unset: the CLM_EDIT_GATE env var (fit|shrink) decides, default fit.
         allow_edit_growth: bool | str | None = None,
+        enable_context_editing: bool | str = True,
         # Compaction wording in the nudges. Only "default" exists in this release;
         # "auto" resolves to it.
         ctx_hint: str = "auto",
@@ -280,13 +282,14 @@ class ClmAgent(BaseAgent):
         self.max_num_retry_on_limit = max(0, int(max_num_retry_on_limit))
         self.retry_edit_margin_tokens = int(retry_edit_margin_tokens)
         self.allow_edit_growth = resolve_allow_edit_growth(allow_edit_growth)
+        self.enable_context_editing = self._as_bool(enable_context_editing)
         self.ctx_hint = ctx_hint
         hint = (
             f"Compact {_CTX_FILE} by locating stale regions with code (match a turn by its "
             "[[CTX_TURN i ...]] header or a block by short start/end anchors) and replacing "
             "them with summaries — do not retype the text you remove. Compact settled spans; "
             "keep anything you have not finished using."
-        )
+        ) if self.enable_context_editing else ""
         want_hint = (self.ctx_hint or "auto").strip().lower()
         if want_hint == "auto":
             want_hint = "default"
@@ -341,6 +344,7 @@ class ClmAgent(BaseAgent):
             obs_cfg=_OBS_CFG,
             allow_edit_growth=self.allow_edit_growth,
             context_budget_tokens=self.context_budget_tokens or 0,
+            enable_context_editing=self.enable_context_editing,
         )
         self._host_mirror = self._ctx.host_mirror
         self.instance_template = _load_instance_template(task_template)
@@ -459,7 +463,8 @@ class ClmAgent(BaseAgent):
             if self.context_budget_tokens
             else "your model's full context window"
         )
-        system_content = _SYSTEM_TEMPLATE.replace("{{context_budget}}", budget_str)
+        template = _SYSTEM_TEMPLATE if self.enable_context_editing else _SYSTEM_NO_EDIT_TEMPLATE
+        system_content = template.replace("{{context_budget}}", budget_str)
         system_content = system_content.replace(
             "{{finish_instructions}}", self.finish_policy.prompt_fragment()
         )

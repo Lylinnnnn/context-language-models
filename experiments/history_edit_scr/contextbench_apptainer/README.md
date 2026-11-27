@@ -73,4 +73,20 @@ python "$E/storage.py" publish-eval "$RUN_ID" --subdir contextbench-s42-vllm-off
 
 若沿用 `CLM_MODEL_DIR=/tmp/clm/<MODEL_RUN_ID>/model/modelscope-master-v1` 的共享本机模型，脚本不会在单次 ContextBench 结束时删除它，以免影响随后使用该模型的任务。**所有**依赖该共享暂存的任务都结束后，执行一次 `python "$E/storage.py" publish-model "$MODEL_RUN_ID" --cleanup`，核验 OSS 原权重再释放本机副本。
 
-这组保持单题试跑验证过的 vLLM 0.19.1、Qwen3.6-27B、`ClmStream` 和 SCR **off** 配置；论文中 SGLang 后端和 8 seed 统计不能用这组结果代替。若要做 SCR on 对照，在另一轮使用新的 `RUN_ID` 和 `--mode on`，同一份 seed 42 任务会按相同 shard 规则运行，输出目录是 `contextbench-s42-vllm-on`。
+这组保持单题试跑验证过的 vLLM 0.19.1、Qwen3.6-27B、`ClmStream` 和 SCR **off** 配置；论文 ContextBench 主图使用 GPT-5.4，每个难度运行四个 seed，部分难度运行八个 seed。这组单 seed、不同模型的结果不能直接当作主图的数值复现。若要做 SCR on 对照，在另一轮使用新的 `RUN_ID` 和 `--mode on`，同一份 seed 42 任务会按相同 shard 规则运行，输出目录是 `contextbench-s42-vllm-on`。
+
+## 已归档结果的编辑与案例审计
+
+完整评测成功归档后，运行以下命令。它从 OSS 读取每题较小的 `usage.json`、`timing.json`，自动把 reward 未满分、任务流未结束或评分无效的题列为 bad case；从每个类别挑一题编辑次数最多的完整满分题作为 good case。仅对这些案例读取完整 `trajectory.ctx.json`，不拉取模型权重、数据集或全部逐轮快照，也不启动 GPU 服务。
+
+```bash
+conda activate clm
+E=experiments/history_edit_scr
+RUN_ID=<这次运行的 cb-full-s42-...>
+python -u "$E/contextbench_apptainer/audit_run.py" "$RUN_ID"
+ossutil cat "oss://industry-algo/yanlin/clm/eval/$RUN_ID/contextbench-s42-audit-vllm-off/files/audit.json"
+```
+
+报告自动归档到独立的 `eval/<RUN_ID>/contextbench-s42-audit-vllm-off/` 前缀，核验后删除本次审计在 `/tmp/clm/<RUN_ID>/` 下的报告和临时下载。`tasks.csv` 保留全部 32 题的分数、送达操作数和编辑计数；各 `cases/<task>/events.jsonl` 按编辑回执列出模型原始回答、完整 bash 命令、工具回执及应用编辑前后的 token 数；`case.md` 展示首个、缩减最多和最后一个编辑。`trajectory.ctx.json` 的下一段 `input_context` 是编辑后模型会看到的历史，事件中的 `next_segment_id`、`next_context_sha256` 可用于定位与核验。若事件数与 `usage.json` 的 accepted sync 数不符，案例报告会明确标记轨迹不完整。
+
+这些 good/bad 标签只用于分拣：满分且读完任务流的题为 good；其余为 bad。它们本身不判断错误由哪次编辑造成。`trajectory.json` 是最后留下的上下文，不能单独还原被编辑删除的内容；`timing.json` 中的命令也只有前 200 字符。详细追溯应以 `trajectory.ctx.json` 的分段和 `context_snapshots/` 为准。工具观察在进入模型上下文前会受 `observation_max_chars` 截断，因此日志中的“原输出”指模型实际收到的文本，不保证包含 shell 命令产生的所有原始字节。

@@ -77,16 +77,16 @@ python "$E/storage.py" publish-eval "$RUN_ID" --subdir contextbench-s42-vllm-off
 
 ## 已归档结果的编辑与案例审计
 
-完整评测成功归档后，运行以下命令。它从 OSS 读取每题较小的 `usage.json`、`timing.json`，自动把 reward 未满分、任务流未结束或评分无效的题列为 bad case；从每个类别挑一题编辑次数最多的完整满分题作为 good case。仅对这些案例读取完整 `trajectory.ctx.json`，不拉取模型权重、数据集或全部逐轮快照，也不启动 GPU 服务。
+完整评测成功归档后，运行以下命令。它从 OSS 读取每题较小的 `usage.json`、`timing.json`，把未满分或任务流未结束的题列为 bad case，并从每类挑一题完整满分的 good case。仅对选中的题读取完整 `trajectory.ctx.json`，不拉取模型权重、数据集或全部逐轮快照，也不启动 GPU 服务。
 
 ```bash
 conda activate clm
 E=experiments/history_edit_scr
-RUN_ID=<这次运行的 cb-full-s42-...>
+RUN_ID=cb-full-s42-20261126T122915Z
 python -u "$E/contextbench_apptainer/audit_run.py" "$RUN_ID"
-ossutil cat "oss://industry-algo/yanlin/clm/eval/$RUN_ID/contextbench-s42-audit-vllm-off/files/audit.json"
+cat "tmp_result/$RUN_ID-contextbench-s42-vllm-off-analysis.md"
 ```
 
-报告自动归档到独立的 `eval/<RUN_ID>/contextbench-s42-audit-vllm-off/` 前缀，核验后删除本次审计在 `/tmp/clm/<RUN_ID>/` 下的报告和临时下载。`tasks.csv` 保留全部 32 题的分数、送达操作数和编辑计数；各 `cases/<task>/events.jsonl` 按编辑回执列出模型原始回答、完整 bash 命令、工具回执及应用编辑前后的 token 数；`case.md` 展示首个、缩减最多和最后一个编辑。`trajectory.ctx.json` 的下一段 `input_context` 是编辑后模型会看到的历史，事件中的 `next_segment_id`、`next_context_sha256` 可用于定位与核验。若事件数与 `usage.json` 的 accepted sync 数不符，案例报告会明确标记轨迹不完整。
+审计只生成一份 Markdown，保留在仓库的 `tmp_result/<RUN_ID>-contextbench-s42-vllm-off-analysis.md` 供直接打开；同一份上传至原评测的 `eval/<RUN_ID>/contextbench-s42-vllm-off/files/analysis.md`。上传后重新下载并核对 SHA-256，再写 `files/analysis.md._SUCCESS`。原评测的 manifest 和 `_SUCCESS` 不覆盖；新报告及其标记是附加文件。下载的轨迹暂存在 `/tmp/clm/<RUN_ID>/tmp/`，审计结束自动清除，报告本地副本保留。
 
-这些 good/bad 标签只用于分拣：满分且读完任务流的题为 good；其余为 bad。它们本身不判断错误由哪次编辑造成。`trajectory.json` 是最后留下的上下文，不能单独还原被编辑删除的内容；`timing.json` 中的命令也只有前 200 字符。详细追溯应以 `trajectory.ctx.json` 的分段和 `context_snapshots/` 为准。工具观察在进入模型上下文前会受 `observation_max_chars` 截断，因此日志中的“原输出”指模型实际收到的文本，不保证包含 shell 命令产生的所有原始字节。
+报告顶部是一张案例分数表；每个案例用三列横向展示一次历史编辑的前后片段，并用删除线和新增高亮标记变化。对比时忽略自动重编号的回合头，优先显示正文差异。下方折叠区提供该次编辑的 Qwen 原始回复、完整 bash 命令和工具返回。bad case 展示最后一次编辑，good case 展示缩减最多的一次编辑。标签只用于分拣，不声称该次编辑导致最终分数。`trajectory.json` 只保留最终历史；完整追溯以 `trajectory.ctx.json` 的分段和逐轮快照为准。工具返回可能在进入模型上下文前被截断，因此报告展示的是模型实际收到的工具文本。
